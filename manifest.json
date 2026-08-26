@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.cozidian.dnd",
+  "name": "SRD Lookup",
+  "version": "1.0.0",
+  "author": "Christoffer Celorico-Berglund",
+  "license": "MIT",
+  "description": "Summon-search the 5.2 SRD (2024 / 5.5): conditions, spells, monsters, rules, and feats. Offline snapshot from Open5e.",
+  "kinds": [
+    "overlay",
+    "bar-widget"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "overlay": "Overlay.qml",
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "SRD",
+    "description": "Search conditions, spells, monsters, and combat rules.",
+    "category": "Utility",
+    "allowMultiple": false,
+    "defaultSection": "center"
+  }
+}
