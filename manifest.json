@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.cozidian.dnd",
   "name": "SRD Lookup",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": "Christoffer Celorico-Berglund",
   "license": "MIT",
   "description": "Summon-search the 5.2 SRD (2024 / 5.5): conditions, spells, monsters, rules, and feats. Offline snapshot from Open5e.",

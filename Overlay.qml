@@ -67,6 +67,16 @@ Item {
     else root.open("{}")
   }
 
+  function readIndexBounded() {
+    if (!root.dataPath) {
+      root.loadEntries("")
+      return
+    }
+    if (indexReader.running)
+      indexReader.running = false
+    indexReader.running = true
+  }
+
   function loadEntries(raw) {
     root.entries = Search.parseIndex(raw)
     if (root.opened) root.rebuildDisplay()
@@ -94,7 +104,7 @@ Item {
   }
 
   function setFilter(nextFilter) {
-    root.filterText = nextFilter
+    root.filterText = Search.sanitizeFilter(nextFilter)
     root.selectedIndex = 0
     root.cursorActive = true
     root.copiedHint = ""
@@ -138,10 +148,32 @@ Item {
 
   FileView {
     path: root.dataPath
+    preload: false
+    watchChanges: true
     printErrors: false
-    onLoaded: root.loadEntries(text())
-    onLoadFailed: root.loadEntries("")
+    onFileChanged: root.readIndexBounded()
   }
+
+  Process {
+    id: indexReader
+    running: false
+    command: root.dataPath
+      ? ["/usr/bin/head", "-c", String(Search.MAX_INDEX_BYTES + 1), "--", root.dataPath]
+      : ["/usr/bin/true"]
+    stdout: StdioCollector {
+      id: indexOut
+      waitForEnd: true
+    }
+    onExited: function(exitCode) {
+      var raw = String(indexOut.text || "")
+      if (!root.dataPath || exitCode !== 0 || raw.length > Search.MAX_INDEX_BYTES)
+        root.loadEntries("")
+      else
+        root.loadEntries(raw)
+    }
+  }
+
+  Component.onCompleted: root.readIndexBounded()
 
   PanelWindow {
     id: panel
@@ -246,6 +278,7 @@ Item {
             Text {
               width: parent.width
               text: root.filterText || "Search the SRD…"
+              textFormat: Text.PlainText
               color: root.foreground
               opacity: root.filterText ? 1 : 0.58
               font.family: root.fontFamily
@@ -257,6 +290,7 @@ Item {
               width: parent.width
               visible: root.filterText === ""
               text: "spell fireball  ·  monster goblin  ·  rule cover  ·  feat alert"
+              textFormat: Text.PlainText
               color: root.foreground
               opacity: 0.45
               font.family: root.fontFamily
@@ -270,6 +304,7 @@ Item {
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
             text: root.copiedHint !== "" ? root.copiedHint : "Enter copies  ·  Esc closes"
+            textFormat: Text.PlainText
             color: root.foreground
             opacity: 0.45
             font.family: root.fontFamily
@@ -325,6 +360,7 @@ Item {
 
                     Text {
                       text: row.kindLabel
+                      textFormat: Text.PlainText
                       color: row.hasCursor ? root.selectedText : root.foreground
                       opacity: 0.55
                       font.family: root.fontFamily
@@ -336,6 +372,7 @@ Item {
                     Text {
                       width: parent.width - parent.children[0].width - parent.spacing
                       text: row.name
+                      textFormat: Text.PlainText
                       color: row.hasCursor ? root.selectedText : root.foreground
                       font.family: root.fontFamily
                       font.pixelSize: Style.font.body
@@ -347,6 +384,7 @@ Item {
                   Text {
                     width: parent.width
                     text: row.summary
+                    textFormat: Text.PlainText
                     color: row.hasCursor ? root.selectedText : root.foreground
                     opacity: 0.7
                     font.family: root.fontFamily
@@ -390,6 +428,7 @@ Item {
                 Text {
                   width: parent.width
                   text: root.currentRow() ? root.currentRow().name : ""
+                  textFormat: Text.PlainText
                   color: root.foreground
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.title
@@ -401,6 +440,7 @@ Item {
                   width: parent.width
                   visible: root.currentRow() !== null
                   text: root.currentRow() ? root.currentRow().kindLabel : ""
+                  textFormat: Text.PlainText
                   color: root.foreground
                   opacity: 0.55
                   font.family: root.fontFamily
@@ -411,6 +451,7 @@ Item {
                 Text {
                   width: parent.width
                   text: root.currentRow() ? root.currentRow().body : ""
+                  textFormat: Text.PlainText
                   color: root.foreground
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.body
@@ -429,6 +470,7 @@ Item {
             Text {
               width: parent.width
               text: root.entries.length === 0 ? "No SRD index loaded" : "No matches for “" + root.filterText + "”"
+              textFormat: Text.PlainText
               color: root.foreground
               opacity: 0.7
               font.family: root.fontFamily

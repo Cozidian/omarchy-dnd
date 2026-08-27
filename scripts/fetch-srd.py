@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 import time
 import urllib.parse
@@ -11,16 +12,80 @@ import urllib.request
 from pathlib import Path
 
 BASE = "https://api.open5e.com/v2"
+ALLOWED_HOST = "api.open5e.com"
 DOC = "srd-2024"
 UA = "omarchy-dnd-srd-lookup/1.0 (https://github.com/Cozidian/omarchy-dnd)"
+KINDS = frozenset({"spell", "monster", "condition", "rule", "feat"})
+
+MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+MAX_PAGES = 40
+MAX_ENTRIES = 4000
+MAX_NAME_CHARS = 120
+MAX_SUMMARY_CHARS = 280
+MAX_BODY_CHARS = 16 * 1024
+MAX_TAGS_CHARS = 240
+MAX_ROW_STRING = 32 * 1024
+MAX_LIST_ITEMS = 64
+MAX_OBJECT_KEYS = 64
+MAX_DEPTH = 8
+
+_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
+_TAG_RE = re.compile(r"<[^>]*>")
+_INCOMPLETE_TAG_RE = re.compile(r"<[^>]*$")
+
+
+def allowed_url(url: str) -> bool:
+    parsed = urllib.parse.urlparse(url)
+    return parsed.scheme == "https" and parsed.hostname == ALLOWED_HOST
+
+
+def read_bounded(resp, max_bytes: int = MAX_RESPONSE_BYTES) -> bytes:
+    length = resp.headers.get("Content-Length")
+    if length is not None:
+        try:
+            declared = int(length)
+        except ValueError:
+            declared = -1
+        if declared > max_bytes:
+            raise RuntimeError(f"response Content-Length {declared} exceeds {max_bytes} byte ceiling")
+    data = resp.read(max_bytes + 1)
+    if len(data) > max_bytes:
+        raise RuntimeError(f"response exceeds {max_bytes} byte ceiling")
+    return data
 
 
 def get(path: str, params: dict) -> dict:
     query = urllib.parse.urlencode(params, doseq=True)
     url = f"{BASE}{path}?{query}"
+    if not allowed_url(url):
+        raise RuntimeError(f"refusing URL {url}")
     req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "application/json"})
     with urllib.request.urlopen(req, timeout=60) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+        if not allowed_url(resp.geturl()):
+            raise RuntimeError(f"refusing redirected URL {resp.geturl()}")
+        payload = json.loads(read_bounded(resp).decode("utf-8"))
+    if not isinstance(payload, dict):
+        raise RuntimeError("Open5e response is not an object")
+    return payload
+
+
+def clamp_value(value, depth: int = 0):
+    if depth > MAX_DEPTH:
+        return None
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        return value[:MAX_ROW_STRING]
+    if isinstance(value, list):
+        return [clamp_value(item, depth + 1) for item in value[:MAX_LIST_ITEMS]]
+    if isinstance(value, dict):
+        out = {}
+        for i, (key, item) in enumerate(value.items()):
+            if i >= MAX_OBJECT_KEYS:
+                break
+            out[str(key)[:64]] = clamp_value(item, depth + 1)
+        return out
+    return None
 
 
 def paginate(path: str, params: dict) -> list:
@@ -28,15 +93,58 @@ def paginate(path: str, params: dict) -> list:
     params.setdefault("limit", 50)
     out = []
     page = 1
-    while True:
+    while page <= MAX_PAGES and len(out) < MAX_ENTRIES:
         params["page"] = page
         payload = get(path, params)
-        out.extend(payload.get("results") or [])
+        rows = payload.get("results") or []
+        if not isinstance(rows, list) or not rows:
+            break
+        for row in rows:
+            if len(out) >= MAX_ENTRIES:
+                break
+            if not isinstance(row, dict):
+                continue
+            clamped = clamp_value(row)
+            if isinstance(clamped, dict):
+                out.append(clamped)
         if not payload.get("next"):
             break
         page += 1
         time.sleep(0.15)
     return out
+
+
+def sanitize_text(value, *, allow_newlines: bool, max_chars: int) -> str:
+    text = str(value or "")
+    text = _COMMENT_RE.sub("", text)
+    text = _TAG_RE.sub("", text)
+    text = _INCOMPLETE_TAG_RE.sub("", text)
+    cleaned = []
+    for ch in text:
+        code = ord(ch)
+        if code in (0x09, 0x0A, 0x0D):
+            if allow_newlines:
+                cleaned.append("\n" if code != 0x09 else " ")
+            continue
+        if code < 0x20 or 0x7F <= code <= 0x9F:
+            continue
+        if code in (0x200B, 0x200C, 0x200D, 0x200E, 0x200F):
+            continue
+        if 0x202A <= code <= 0x202E:
+            continue
+        if 0x2066 <= code <= 0x2069:
+            continue
+        if code in (0xFEFF, 0xFFF9, 0xFFFA, 0xFFFB, 0xFFFC):
+            continue
+        cleaned.append(ch)
+    text = "".join(cleaned)
+    if allow_newlines:
+        text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    else:
+        text = " ".join(text.split())
+    if len(text) > max_chars:
+        text = text[:max_chars]
+    return text
 
 
 def pick_desc(descriptions: list, document: str = DOC) -> str:
@@ -216,13 +324,22 @@ def format_feat(row: dict) -> dict | None:
     return entry("feat", name, summary or "Feat", body, f"{name} feat {feat_type} {prereq}")
 
 
-def entry(kind: str, name: str, summary: str, body: str, tags: str) -> dict:
+def entry(kind: str, name: str, summary: str, body: str, tags: str) -> dict | None:
+    kind = str(kind or "").strip()
+    if kind not in KINDS:
+        return None
+    name = sanitize_text(name, allow_newlines=False, max_chars=MAX_NAME_CHARS)
+    summary = sanitize_text(summary, allow_newlines=False, max_chars=MAX_SUMMARY_CHARS)
+    body = sanitize_text(body, allow_newlines=True, max_chars=MAX_BODY_CHARS)
+    tags = sanitize_text(tags, allow_newlines=False, max_chars=MAX_TAGS_CHARS).lower()
+    if not name or not body:
+        return None
     return {
         "kind": kind,
         "name": name,
-        "summary": " ".join(summary.split()),
-        "body": body.replace("\r\n", "\n").strip(),
-        "tags": " ".join(tags.lower().split()),
+        "summary": summary,
+        "body": body,
+        "tags": tags,
     }
 
 
@@ -239,7 +356,7 @@ def main() -> int:
 
     print("spells…", file=sys.stderr)
     spells = [
-        format_spell(row)
+        item
         for row in paginate(
             "/spells/",
             {
@@ -267,11 +384,12 @@ def main() -> int:
                 ),
             },
         )
+        if (item := format_spell(row))
     ]
 
     print("creatures…", file=sys.stderr)
     monsters = [
-        format_monster(row)
+        item
         for row in paginate(
             "/creatures/",
             {
@@ -294,15 +412,17 @@ def main() -> int:
                 ),
             },
         )
+        if (item := format_monster(row))
     ]
 
     print("rules…", file=sys.stderr)
     rules = [
-        format_rule(row)
+        item
         for row in paginate(
             "/rules/",
             {"document__key": DOC, "limit": 50, "fields": "name,key,desc"},
         )
+        if (item := format_rule(row))
     ]
 
     print("feats…", file=sys.stderr)
@@ -320,7 +440,8 @@ def main() -> int:
             feats.append(item)
 
     entries = conditions + spells + monsters + rules + feats
-    entries = [e for e in entries if e.get("name") and e.get("body")]
+    entries = [e for e in entries if e and e.get("name") and e.get("body")]
+    entries = entries[:MAX_ENTRIES]
     entries.sort(key=lambda e: (e["kind"], e["name"].lower()))
 
     payload = {

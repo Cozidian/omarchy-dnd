@@ -56,6 +56,13 @@ With an empty query, the list is just the conditions — the thing you look up m
 python3 scripts/fetch-srd.py
 ```
 
+The refresh path is HTTPS-only to `api.open5e.com`, with response-byte, page, entry, and string-length ceilings. Names, summaries, and bodies are stripped of markup and control characters before they are written. The overlay loads the snapshot through a byte-capped read, keeps at most 4000 entries, searches a 1 KiB haystack per entry, and renders every `Text` sink as `Text.PlainText`.
+
+```sh
+python3 tests/test_fetch.py
+node tests/test_search.js
+```
+
 The plugin code is MIT. SRD 5.2 text is CC BY 4.0, as published by Wizards of the Coast and redistributed by Open5e.
 
 ## Remove
