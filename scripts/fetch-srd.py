@@ -39,6 +39,17 @@ def allowed_url(url: str) -> bool:
     return parsed.scheme == "https" and parsed.hostname == ALLOWED_HOST
 
 
+class HostLimitedRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not allowed_url(newurl):
+            raise RuntimeError(f"refusing redirect to {newurl}")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def opener() -> urllib.request.OpenerDirector:
+    return urllib.request.build_opener(HostLimitedRedirectHandler)
+
+
 def read_bounded(resp, max_bytes: int = MAX_RESPONSE_BYTES) -> bytes:
     length = resp.headers.get("Content-Length")
     if length is not None:
@@ -60,7 +71,7 @@ def get(path: str, params: dict) -> dict:
     if not allowed_url(url):
         raise RuntimeError(f"refusing URL {url}")
     req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "application/json"})
-    with urllib.request.urlopen(req, timeout=60) as resp:
+    with opener().open(req, timeout=60) as resp:
         if not allowed_url(resp.geturl()):
             raise RuntimeError(f"refusing redirected URL {resp.geturl()}")
         payload = json.loads(read_bounded(resp).decode("utf-8"))

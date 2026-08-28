@@ -25,10 +25,10 @@ def _die(_signum=None, _frame=None) -> None:
 
 
 def _open_flags() -> int:
-    flags = os.O_RDONLY
+    if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_NONBLOCK"):
+        raise RuntimeError("O_NOFOLLOW and O_NONBLOCK are required")
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
     flags |= getattr(os, "O_CLOEXEC", 0)
-    flags |= getattr(os, "O_NOFOLLOW", 0)
-    flags |= getattr(os, "O_NONBLOCK", 0)
     return flags
 
 
@@ -50,7 +50,11 @@ def _safe_path(path: str) -> bool:
 
 def read_index(path: str, max_bytes: int) -> bytes | None:
     try:
-        fd = os.open(path, _open_flags())
+        flags = _open_flags()
+    except RuntimeError:
+        return None
+    try:
+        fd = os.open(path, flags)
     except OSError:
         return None
     try:

@@ -222,5 +222,8 @@ function copyText(entry) {
   var body = sanitizeText(entry.body, true, MAX_BODY_CHARS)
   if (!title || !body)
     return ""
-  return title + "  (" + kind + ")\n\n" + body
+  var out = title + "  (" + kind + ")\n\n" + body
+  if (out.indexOf("\0") !== -1)
+    return ""
+  return out
 }

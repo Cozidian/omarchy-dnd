@@ -99,6 +99,14 @@ function testSanitizeFilterCapsAndStrips() {
   assert.ok(cleaned.startsWith("foo"));
 }
 
+function testCopyTextIsPlainAndDropsEmpty() {
+  const text = ctx.copyText({ kind: "spell", name: "Fireball", body: "A bright streak." });
+  assert.ok(text.indexOf("Fireball") === 0);
+  assert.ok(text.indexOf("A bright streak.") !== -1);
+  assert.strictEqual(ctx.copyText(null), "");
+  assert.strictEqual(ctx.copyText({ kind: "spell", name: "", body: "x" }), "");
+}
+
 const tests = [
   testParseRejectsOversizedRaw,
   testParseCapsEntries,
@@ -106,7 +114,8 @@ const tests = [
   testSearchDoesNotScanPastHaystack,
   testFilterUsesNameAndBoundedHaystack,
   testSnapshotParsesUnderCaps,
-  testSanitizeFilterCapsAndStrips
+  testSanitizeFilterCapsAndStrips,
+  testCopyTextIsPlainAndDropsEmpty
 ];
 
 for (const fn of tests)

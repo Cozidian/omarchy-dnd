@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import stat
 import subprocess
@@ -16,15 +17,31 @@ SCRIPT = ROOT / "scripts" / "read-index.py"
 PYTHON = "/usr/bin/python3"
 
 
+def load_reader():
+    spec = importlib.util.spec_from_file_location("read_index", SCRIPT)
+    mod = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(mod)
+    return mod
+
+
+reader = load_reader()
+
+
 def run_reader(path: str, max_bytes: int = 64, timeout: float = 2.0) -> subprocess.CompletedProcess:
     return subprocess.run(
-        [PYTHON, "-B", "--", str(SCRIPT), path, str(max_bytes)],
+        [PYTHON, "-I", "-B", "--", str(SCRIPT), path, str(max_bytes)],
         capture_output=True,
         timeout=timeout,
     )
 
 
 class ReadIndexTests(unittest.TestCase):
+    def test_open_flags_require_nofollow_and_nonblock(self):
+        flags = reader._open_flags()
+        self.assertTrue(flags & os.O_NOFOLLOW)
+        self.assertTrue(flags & os.O_NONBLOCK)
+
     def test_reads_regular_file_bytes_from_same_descriptor(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "srd.json"

@@ -19,6 +19,7 @@ Item {
   property bool cursorActive: false
   property var entries: []
   property string copiedHint: ""
+  property string pendingCopy: ""
 
   property color background: Color.menu.background
   property color foreground: Color.menu.text
@@ -133,8 +134,12 @@ Item {
     var row = root.currentRow()
     if (!row) return
     var text = Search.copyText(row)
-    if (!text) return
-    Quickshell.execDetached(["bash", "-c", "printf %s " + Util.shellQuote(text) + " | wl-copy"])
+    if (!text || text.indexOf("\0") !== -1) return
+    root.pendingCopy = text
+    if (copier.running)
+      copier.running = false
+    copier.stdinEnabled = true
+    copier.running = true
     root.copiedHint = "Copied"
     copiedTimer.restart()
   }
@@ -160,7 +165,7 @@ Item {
     id: indexReader
     running: false
     command: (root.dataPath && root.indexReaderScript)
-      ? ["/usr/bin/python3", "-B", "--", root.indexReaderScript, root.dataPath, String(Search.MAX_INDEX_BYTES)]
+      ? ["/usr/bin/python3", "-I", "-B", "--", root.indexReaderScript, root.dataPath, String(Search.MAX_INDEX_BYTES)]
       : ["/usr/bin/true"]
     stdout: StdioCollector {
       id: indexOut
@@ -172,6 +177,19 @@ Item {
         root.loadEntries("")
       else
         root.loadEntries(raw)
+    }
+  }
+
+  Process {
+    id: copier
+    running: false
+    stdinEnabled: true
+    command: ["/usr/bin/wl-copy", "--"]
+    onStarted: {
+      if (root.pendingCopy !== "")
+        copier.write(root.pendingCopy)
+      copier.stdinEnabled = false
+      root.pendingCopy = ""
     }
   }
 

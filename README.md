@@ -56,7 +56,7 @@ With an empty query, the list is just the conditions — the thing you look up m
 python3 scripts/fetch-srd.py
 ```
 
-The refresh path is HTTPS-only to `api.open5e.com`, with response-byte, page, entry, and string-length ceilings. Names, summaries, and bodies are stripped of markup and control characters before they are written. The overlay loads the snapshot through one no-follow, nonblocking regular-file descriptor (byte-capped, 2s deadline), keeps at most 4000 entries, searches a 1 KiB haystack per entry, and renders every `Text` sink as `Text.PlainText`.
+The refresh path is HTTPS-only to `api.open5e.com`, with response-byte, page, entry, and string-length ceilings. Redirects are refused before they are followed unless the next URL is still HTTPS `api.open5e.com`. Names, summaries, and bodies are stripped of markup and control characters before they are written. The overlay loads the snapshot through an isolated (`python3 -I`) helper that opens one no-follow, nonblocking regular-file descriptor (byte-capped, 2s deadline), keeps at most 4000 entries, searches a 1 KiB haystack per entry, and renders every `Text` sink as `Text.PlainText`. Copy feeds `/usr/bin/wl-copy --` on stdin; snapshot text never reaches a shell.
 
 ```sh
 python3 tests/test_fetch.py

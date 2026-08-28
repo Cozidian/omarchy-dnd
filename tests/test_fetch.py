@@ -6,6 +6,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import unittest
+import urllib.request
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -93,6 +94,28 @@ class SanitizeTests(unittest.TestCase):
 
     def test_entry_rejects_unknown_kind(self):
         self.assertIsNone(fetch.entry("wizard", "Name", "sum", "body", "tags"))
+
+
+class RedirectTests(unittest.TestCase):
+    def test_allowed_url_https_open5e_only(self):
+        self.assertTrue(fetch.allowed_url("https://api.open5e.com/v2/spells/"))
+        self.assertFalse(fetch.allowed_url("http://api.open5e.com/v2/spells/"))
+        self.assertFalse(fetch.allowed_url("https://evil.example/v2/spells/"))
+        self.assertFalse(fetch.allowed_url("https://127.0.0.1/v2/spells/"))
+        self.assertFalse(fetch.allowed_url("file:///etc/passwd"))
+
+    def test_redirect_handler_refuses_foreign_host_before_follow(self):
+        handler = fetch.HostLimitedRedirectHandler()
+        req = urllib.request.Request("https://api.open5e.com/v2/spells/")
+        with self.assertRaises(RuntimeError) as raised:
+            handler.redirect_request(req, None, 302, "Found", {}, "http://127.0.0.1/secret")
+        self.assertIn("127.0.0.1", str(raised.exception))
+
+    def test_redirect_handler_refuses_http_even_on_allowed_host(self):
+        handler = fetch.HostLimitedRedirectHandler()
+        req = urllib.request.Request("https://api.open5e.com/v2/spells/")
+        with self.assertRaises(RuntimeError):
+            handler.redirect_request(req, None, 301, "Moved", {}, "http://api.open5e.com/v2/spells/")
 
 
 class ClampAndPageTests(unittest.TestCase):
