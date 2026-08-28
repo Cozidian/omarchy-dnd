@@ -36,11 +36,13 @@ Item {
   property int cardHeight: Math.min(Style.space(620), panel.height - Style.gapsOut * 2)
   property int rowHeight: Math.max(Style.space(52), Style.font.body + Style.font.caption + Style.spacing.rowPaddingX * 2)
 
-  readonly property string dataPath: {
+  readonly property string pluginDir: {
     if (manifest && manifest.__sourceDir)
-      return manifest.__sourceDir + "/data/srd.json"
-    return String(Qt.resolvedUrl("data/srd.json")).replace(/^file:\/\//, "")
+      return manifest.__sourceDir
+    return String(Qt.resolvedUrl(".")).replace(/^file:\/\//, "").replace(/\/$/, "")
   }
+  readonly property string dataPath: root.pluginDir ? root.pluginDir + "/data/srd.json" : ""
+  readonly property string indexReaderScript: root.pluginDir ? root.pluginDir + "/scripts/read-index.py" : ""
 
   function open(payloadJson) {
     root.opened = true
@@ -68,7 +70,7 @@ Item {
   }
 
   function readIndexBounded() {
-    if (!root.dataPath) {
+    if (!root.dataPath || !root.indexReaderScript) {
       root.loadEntries("")
       return
     }
@@ -157,8 +159,8 @@ Item {
   Process {
     id: indexReader
     running: false
-    command: root.dataPath
-      ? ["/usr/bin/head", "-c", String(Search.MAX_INDEX_BYTES + 1), "--", root.dataPath]
+    command: (root.dataPath && root.indexReaderScript)
+      ? ["/usr/bin/python3", "-B", "--", root.indexReaderScript, root.dataPath, String(Search.MAX_INDEX_BYTES)]
       : ["/usr/bin/true"]
     stdout: StdioCollector {
       id: indexOut
@@ -166,7 +168,7 @@ Item {
     }
     onExited: function(exitCode) {
       var raw = String(indexOut.text || "")
-      if (!root.dataPath || exitCode !== 0 || raw.length > Search.MAX_INDEX_BYTES)
+      if (!root.dataPath || !root.indexReaderScript || exitCode !== 0 || raw.length > Search.MAX_INDEX_BYTES)
         root.loadEntries("")
       else
         root.loadEntries(raw)
