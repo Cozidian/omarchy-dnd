@@ -101,9 +101,43 @@ Item {
     else if (selectedIndex >= displayModel.count) selectedIndex = displayModel.count - 1
     else if (selectedIndex < 0) selectedIndex = 0
     cursorActive = displayModel.count > 0
+    root.rebuildDetail()
     Qt.callLater(function() {
       if (displayModel.count > 0) resultList.positionViewAtIndex(root.selectedIndex, ListView.Contain)
     })
+  }
+
+  function wash(c, a) {
+    return Qt.rgba(c.r, c.g, c.b, a)
+  }
+
+  function rebuildDetail() {
+    bodyModel.clear()
+    var row = root.currentRow()
+    var blocks = Search.bodyBlocks(row ? row.body : "")
+    for (var i = 0; i < blocks.length; i++) {
+      var block = blocks[i]
+      var kind = String(block.kind || "text")
+      var isTable = kind === "table"
+      var isList = kind === "list"
+      var isStats = kind === "stats"
+      var rows = isTable ? (block.rows || []) : (isStats ? (block.rows || []) : [])
+      var items = isList ? (block.items || []) : []
+      bodyModel.append({
+        kind: kind,
+        text: String(block.text || ""),
+        caption: String(block.caption || ""),
+        colCount: isTable ? (block.colCount || 0) : 0,
+        rowCount: isTable ? (1 + rows.length) : (isList ? items.length : (isStats ? rows.length : 0)),
+        ordered: block.ordered ? 1 : 0,
+        headersJson: isTable ? JSON.stringify(block.headers || []) : "[]",
+        rowsJson: isTable ? JSON.stringify(rows) : "[]",
+        weightsJson: isTable ? JSON.stringify(block.weights || []) : "[]",
+        itemsJson: isList ? JSON.stringify(items) : (isStats ? JSON.stringify(rows) : "[]")
+      })
+    }
+    if (detailFlick)
+      detailFlick.contentY = 0
   }
 
   function setFilter(nextFilter) {
@@ -144,7 +178,10 @@ Item {
     copiedTimer.restart()
   }
 
+  onSelectedIndexChanged: root.rebuildDetail()
+
   ListModel { id: displayModel }
+  ListModel { id: bodyModel }
 
   Timer {
     id: copiedTimer
@@ -456,26 +493,339 @@ Item {
                   wrapMode: Text.WordWrap
                 }
 
-                Text {
-                  width: parent.width
+                Rectangle {
                   visible: root.currentRow() !== null
-                  text: root.currentRow() ? root.currentRow().kindLabel : ""
-                  textFormat: Text.PlainText
-                  color: root.foreground
-                  opacity: 0.55
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.caption
-                  font.bold: true
+                  radius: height / 2
+                  color: root.wash(root.selectedBackground, 0.38)
+                  implicitHeight: kindPillText.implicitHeight + Style.space(6)
+                  implicitWidth: kindPillText.implicitWidth + Style.space(16)
+                  height: implicitHeight
+                  width: implicitWidth
+
+                  Text {
+                    id: kindPillText
+                    anchors.centerIn: parent
+                    text: root.currentRow() ? root.currentRow().kindLabel : ""
+                    textFormat: Text.PlainText
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    font.bold: true
+                  }
                 }
 
-                Text {
-                  width: parent.width
-                  text: root.currentRow() ? root.currentRow().body : ""
-                  textFormat: Text.PlainText
-                  color: root.foreground
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.body
-                  wrapMode: Text.WordWrap
+                Repeater {
+                  model: bodyModel
+
+                  Column {
+                    id: blockCol
+                    required property string kind
+                    required property string text
+                    required property string caption
+                    required property int colCount
+                    required property int rowCount
+                    required property int ordered
+                    required property string headersJson
+                    required property string rowsJson
+                    required property string weightsJson
+                    required property string itemsJson
+
+                    width: detailColumn.width
+                    spacing: Style.space(6)
+
+                    Text {
+                      width: parent.width
+                      visible: blockCol.kind === "heading"
+                      text: blockCol.kind === "heading" ? blockCol.text : ""
+                      textFormat: Text.PlainText
+                      color: root.foreground
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.body
+                      font.bold: true
+                      wrapMode: Text.WordWrap
+                    }
+
+                    Rectangle {
+                      visible: blockCol.kind === "heading"
+                      width: Math.min(parent.width, Style.space(64))
+                      height: 1
+                      color: root.border
+                      opacity: 0.45
+                    }
+
+                    Text {
+                      width: parent.width
+                      visible: blockCol.kind === "text"
+                      text: blockCol.kind === "text" ? blockCol.text : ""
+                      textFormat: Text.PlainText
+                      color: root.foreground
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.body
+                      wrapMode: Text.WordWrap
+                    }
+
+                    Flow {
+                      width: parent.width
+                      visible: blockCol.kind === "stats" && blockCol.rowCount > 0
+                      spacing: Style.space(8)
+
+                      Repeater {
+                        model: blockCol.kind === "stats" ? blockCol.rowCount : 0
+
+                        Rectangle {
+                          required property int index
+                          radius: Math.max(6, Math.round(root.cornerRadius * 0.4))
+                          color: root.wash(root.foreground, 0.06)
+                          border.color: root.border
+                          border.width: 1
+                          implicitWidth: Math.min(
+                            blockCol.width,
+                            Math.max(Style.space(88), statChipInner.implicitWidth + Style.space(16))
+                          )
+                          implicitHeight: statChipInner.implicitHeight + Style.space(12)
+                          height: implicitHeight
+                          width: implicitWidth
+
+                          Column {
+                            id: statChipInner
+                            x: Style.space(8)
+                            y: Style.space(6)
+                            width: Math.min(blockCol.width - Style.space(16), implicitWidth)
+                            spacing: Style.space(2)
+
+                            Text {
+                              text: Search.itemField(blockCol.itemsJson, index, "label")
+                              textFormat: Text.PlainText
+                              color: root.foreground
+                              opacity: 0.55
+                              font.family: root.fontFamily
+                              font.pixelSize: Style.font.caption
+                              font.bold: true
+                            }
+
+                            Text {
+                              width: Math.min(blockCol.width - Style.space(40), Math.max(Style.space(72), implicitWidth))
+                              text: Search.itemField(blockCol.itemsJson, index, "value")
+                              textFormat: Text.PlainText
+                              color: root.foreground
+                              font.family: root.fontFamily
+                              font.pixelSize: Style.font.caption
+                              wrapMode: Text.WordWrap
+                            }
+                          }
+                        }
+                      }
+                    }
+
+                    Rectangle {
+                      visible: blockCol.kind === "quote"
+                      width: parent.width
+                      implicitHeight: quoteInner.implicitHeight + Style.space(16)
+                      height: implicitHeight
+                      radius: Math.max(6, Math.round(root.cornerRadius * 0.45))
+                      color: root.wash(root.selectedBackground, 0.12)
+                      border.color: root.border
+                      border.width: 1
+                      clip: true
+
+                      Rectangle {
+                        width: Style.space(4)
+                        height: parent.height
+                        color: root.selectedBackground
+                      }
+
+                      Column {
+                        id: quoteInner
+                        x: Style.space(14)
+                        y: Style.space(8)
+                        width: parent.width - Style.space(22)
+                        spacing: Style.space(4)
+
+                        Text {
+                          width: parent.width
+                          visible: blockCol.caption !== ""
+                          text: blockCol.caption
+                          textFormat: Text.PlainText
+                          color: root.foreground
+                          font.family: root.fontFamily
+                          font.pixelSize: Style.font.caption
+                          font.bold: true
+                          wrapMode: Text.WordWrap
+                        }
+
+                        Text {
+                          width: parent.width
+                          text: blockCol.text
+                          textFormat: Text.PlainText
+                          color: root.foreground
+                          opacity: 0.92
+                          font.family: root.fontFamily
+                          font.pixelSize: Style.font.body
+                          wrapMode: Text.WordWrap
+                        }
+                      }
+                    }
+
+                    Column {
+                      width: parent.width
+                      visible: blockCol.kind === "list" && blockCol.rowCount > 0
+                      spacing: Style.space(8)
+
+                      Repeater {
+                        model: blockCol.kind === "list" ? blockCol.rowCount : 0
+
+                        Row {
+                          required property int index
+                          width: parent.width
+                          spacing: Style.space(8)
+
+                          Item {
+                            width: Style.space(16)
+                            height: Style.space(16)
+
+                            Rectangle {
+                              visible: blockCol.ordered === 0
+                              width: Style.space(7)
+                              height: Style.space(7)
+                              radius: width / 2
+                              color: root.selectedBackground
+                              anchors.horizontalCenter: parent.horizontalCenter
+                              anchors.top: parent.top
+                              anchors.topMargin: Math.max(2, Math.round((Style.font.body - height) / 2))
+                            }
+
+                            Text {
+                              visible: blockCol.ordered !== 0
+                              anchors.horizontalCenter: parent.horizontalCenter
+                              anchors.top: parent.top
+                              text: Search.itemField(blockCol.itemsJson, index, "marker")
+                              textFormat: Text.PlainText
+                              color: root.selectedBackground
+                              font.family: root.fontFamily
+                              font.pixelSize: Style.font.caption
+                              font.bold: true
+                            }
+                          }
+
+                          Column {
+                            width: parent.width - Style.space(24)
+                            spacing: Style.space(2)
+
+                            Text {
+                              width: parent.width
+                              visible: Search.itemField(blockCol.itemsJson, index, "label") !== ""
+                              text: Search.itemField(blockCol.itemsJson, index, "label")
+                              textFormat: Text.PlainText
+                              color: root.foreground
+                              font.family: root.fontFamily
+                              font.pixelSize: Style.font.body
+                              font.bold: true
+                              wrapMode: Text.WordWrap
+                            }
+
+                            Text {
+                              width: parent.width
+                              text: Search.itemField(blockCol.itemsJson, index, "body")
+                              textFormat: Text.PlainText
+                              color: root.foreground
+                              opacity: Search.itemField(blockCol.itemsJson, index, "label") !== "" ? 0.88 : 1
+                              font.family: root.fontFamily
+                              font.pixelSize: Style.font.body
+                              wrapMode: Text.WordWrap
+                            }
+                          }
+                        }
+                      }
+                    }
+
+                    Text {
+                      width: parent.width
+                      visible: blockCol.kind === "table" && blockCol.caption !== ""
+                      text: blockCol.caption
+                      textFormat: Text.PlainText
+                      color: root.foreground
+                      opacity: 0.62
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.caption
+                      font.bold: true
+                      wrapMode: Text.WordWrap
+                    }
+
+                    Rectangle {
+                      id: tableFrame
+                      visible: blockCol.kind === "table" && blockCol.rowCount > 0
+                      width: parent.width
+                      implicitHeight: visible ? tableRows.implicitHeight + 2 : 0
+                      height: implicitHeight
+                      radius: Math.max(6, Math.round(root.cornerRadius * 0.45))
+                      color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.035)
+                      border.color: root.border
+                      border.width: 1
+                      clip: true
+
+                      Column {
+                        id: tableRows
+                        width: parent.width
+                        y: 1
+
+                        Repeater {
+                          model: blockCol.rowCount
+
+                          Rectangle {
+                            id: tableRow
+                            required property int index
+                            width: tableRows.width
+                            readonly property int rowIndex: index
+                            readonly property bool isHeader: rowIndex === 0
+                            readonly property bool isLast: rowIndex === blockCol.rowCount - 1
+                            implicitHeight: rowInner.implicitHeight + Style.space(10)
+                            height: implicitHeight
+                            color: tableRow.isHeader
+                              ? Qt.rgba(root.selectedBackground.r, root.selectedBackground.g, root.selectedBackground.b, 0.38)
+                              : (tableRow.rowIndex % 2 === 0
+                                  ? Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.04)
+                                  : "transparent")
+
+                            Row {
+                              id: rowInner
+                              x: Style.space(8)
+                              y: Style.space(5)
+                              width: parent.width - Style.space(16)
+                              spacing: Style.space(10)
+
+                              Repeater {
+                                model: blockCol.colCount
+
+                                Text {
+                                  required property int index
+                                  readonly property real weight: Search.tableWeight(blockCol.weightsJson, index, blockCol.colCount)
+                                  width: Math.max(1, Math.floor((rowInner.width - rowInner.spacing * Math.max(0, blockCol.colCount - 1)) * weight))
+                                  text: Search.tableCell(blockCol.headersJson, blockCol.rowsJson, tableRow.rowIndex, index)
+                                  textFormat: Text.PlainText
+                                  color: root.foreground
+                                  opacity: tableRow.isHeader || index === 0 ? 1 : 0.88
+                                  font.family: root.fontFamily
+                                  font.pixelSize: Style.font.caption
+                                  font.bold: tableRow.isHeader || index === 0
+                                  wrapMode: Text.WordWrap
+                                }
+                              }
+                            }
+
+                            Rectangle {
+                              anchors.left: parent.left
+                              anchors.right: parent.right
+                              anchors.bottom: parent.bottom
+                              height: 1
+                              visible: !tableRow.isLast
+                              color: root.border
+                              opacity: tableRow.isHeader ? 0.7 : 0.28
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }
