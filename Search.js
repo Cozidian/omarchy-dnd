@@ -97,7 +97,11 @@ function sanitizeText(value, allowNewlines, maxChars) {
 }
 
 function sanitizeFilter(value) {
-  return sanitizeText(value, false, MAX_FILTER_CHARS)
+  var s = stripControls(stripMarkup(value), false)
+  s = s.replace(/\s+/g, " ").replace(/^\s+/g, "")
+  if (s.length > MAX_FILTER_CHARS)
+    s = s.slice(0, MAX_FILTER_CHARS)
+  return s
 }
 
 function haystackFor(name, tags, body) {
@@ -148,7 +152,7 @@ function parseIndex(raw) {
 function parseQuery(text) {
   var query = sanitizeFilter(text).toLowerCase()
   var kind = ""
-  var rest = query
+  var rest = query.replace(/^\s+|\s+$/g, "")
   var spaced = query.match(/^(spell|spells|monster|monsters|creature|creatures|condition|conditions|rule|rules|feat|feats)[:\s]+(.*)$/)
   if (spaced) {
     kind = KIND_ALIASES[spaced[1]] || ""

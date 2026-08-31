@@ -99,6 +99,14 @@ function testSanitizeFilterCapsAndStrips() {
   assert.ok(cleaned.startsWith("foo"));
 }
 
+function testSanitizeFilterKeepsTrailingSpace() {
+  assert.strictEqual(ctx.sanitizeFilter("spell "), "spell ");
+  assert.strictEqual(ctx.sanitizeFilter("  monster goblin"), "monster goblin");
+  const parsed = ctx.parseQuery("spell ");
+  assert.strictEqual(parsed.kind, "spell");
+  assert.strictEqual(parsed.text, "");
+}
+
 function testCopyTextIsPlainAndDropsEmpty() {
   const text = ctx.copyText({ kind: "spell", name: "Fireball", body: "A bright streak." });
   assert.ok(text.indexOf("Fireball") === 0);
@@ -314,6 +322,7 @@ const tests = [
   testFilterUsesNameAndBoundedHaystack,
   testSnapshotParsesUnderCaps,
   testSanitizeFilterCapsAndStrips,
+  testSanitizeFilterKeepsTrailingSpace,
   testCopyTextIsPlainAndDropsEmpty,
   testBodyBlocksParseMultilineTable,
   testBodyBlocksExpandCollapsedTables,

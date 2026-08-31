@@ -303,6 +303,10 @@ Item {
             if (root.cursorActive) root.copyCurrent()
             else if (displayModel.count > 0) root.cursorActive = true
             event.accepted = true
+          } else if (event.key === Qt.Key_Space) {
+            if (event.modifiers & Qt.ControlModifier) return
+            root.setFilter(root.filterText + " ")
+            event.accepted = true
           } else if (event.text && event.text.length === 1 && event.text.charCodeAt(0) >= 32 && event.text.charCodeAt(0) !== 127) {
             if (event.modifiers & Qt.ControlModifier) return
             root.setFilter(root.filterText + event.text)
