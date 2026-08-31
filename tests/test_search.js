@@ -76,6 +76,34 @@ function testFilterUsesNameAndBoundedHaystack() {
   assert.strictEqual(fire[0].name, "Fireball");
 }
 
+function testFuzzyKindPrefixAndTokens() {
+  const out = ctx.parseIndex(JSON.stringify(indexOf([
+    { kind: "spell", name: "Fireball", summary: "Level 3 Evocation", body: "A bright streak flashes.", tags: "fireball spell evocation" },
+    { kind: "monster", name: "Goblin Boss", summary: "Small Fey", body: "A goblin.", tags: "goblin monster" },
+    { kind: "monster", name: "Adult Red Dragon", summary: "Huge Dragon", body: "A dragon.", tags: "dragon monster" },
+    { kind: "feat", name: "Alert", summary: "Origin", body: "You gain benefits.", tags: "alert feat" }
+  ])));
+  const parsed = ctx.parseQuery("mon gob");
+  assert.strictEqual(parsed.kind, "monster");
+  assert.strictEqual(parsed.text, "gob");
+  const gob = ctx.filterEntries(out, "mon gob", 80);
+  assert.strictEqual(gob.length, 1);
+  assert.strictEqual(gob[0].name, "Goblin Boss");
+  const fire = ctx.filterEntries(out, "sp fire", 80);
+  assert.strictEqual(fire.length, 1);
+  assert.strictEqual(fire[0].name, "Fireball");
+  const split = ctx.filterEntries(out, "fire ball", 80);
+  assert.strictEqual(split.length, 1);
+  assert.strictEqual(split[0].name, "Fireball");
+  const dragon = ctx.filterEntries(out, "red drag", 80);
+  assert.strictEqual(dragon.length, 1);
+  assert.strictEqual(dragon[0].name, "Adult Red Dragon");
+  const feat = ctx.parseQuery("f alert");
+  assert.strictEqual(feat.kind, "");
+  const fe = ctx.parseQuery("fe alert");
+  assert.strictEqual(fe.kind, "feat");
+}
+
 function testSnapshotParsesUnderCaps() {
   const raw = fs.readFileSync(path.join(root, "data", "srd.json"), "utf8");
   assert.ok(raw.length <= ctx.MAX_INDEX_BYTES);
@@ -85,6 +113,10 @@ function testSnapshotParsesUnderCaps() {
   const prone = ctx.filterEntries(entries, "prone", 80);
   assert.ok(prone.length >= 1);
   assert.strictEqual(prone[0].name.toLowerCase().includes("prone") || prone[0].haystack.includes("prone"), true);
+  const gobs = ctx.filterEntries(entries, "mon gob", 80);
+  assert.ok(gobs.length >= 1);
+  assert.ok(gobs.every(e => e.kind === "monster"));
+  assert.ok(gobs.some(e => String(e.name).toLowerCase().indexOf("goblin") >= 0));
   for (const row of entries) {
     assert.ok(row.name.length <= ctx.MAX_NAME_CHARS);
     assert.ok(row.body.length <= ctx.MAX_BODY_CHARS);
@@ -320,6 +352,7 @@ const tests = [
   testParseStripsMarkup,
   testSearchDoesNotScanPastHaystack,
   testFilterUsesNameAndBoundedHaystack,
+  testFuzzyKindPrefixAndTokens,
   testSnapshotParsesUnderCaps,
   testSanitizeFilterCapsAndStrips,
   testSanitizeFilterKeepsTrailingSpace,

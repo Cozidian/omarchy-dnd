@@ -34,13 +34,15 @@ Suggested Hyprland bind (pick a chord that is free):
 o.bind("SUPER + SHIFT + D", "SRD lookup", "omarchy-shell shell toggle io.github.cozidian.dnd")
 ```
 
-Type to search. Prefixes narrow the index:
+Type to search. Prefixes narrow the index (`mon`, `sp`, `co`, `ru`, `fe` work too):
 
-- `spell fireball`
-- `monster goblin`
+- `spell fireball` / `sp fire`
+- `monster goblin` / `mon gob`
 - `rule cover`
 - `feat alert`
 - `condition prone`
+
+Spaces split tokens, so `red drag` matches Adult Red Dragon and `fire ball` matches Fireball.
 
 With an empty query, the list is just the conditions — the thing you look up mid-turn.
 

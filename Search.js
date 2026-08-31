@@ -149,16 +149,83 @@ function parseIndex(raw) {
   return out
 }
 
+function resolveKindToken(token) {
+  var t = String(token || "").toLowerCase()
+  if (!t)
+    return ""
+  if (KIND_ALIASES[t])
+    return KIND_ALIASES[t]
+  if (t.length < 2)
+    return ""
+  var found = ""
+  for (var alias in KIND_ALIASES) {
+    if (alias.indexOf(t) !== 0)
+      continue
+    var kind = KIND_ALIASES[alias]
+    if (!found)
+      found = kind
+    else if (found !== kind)
+      return ""
+  }
+  return found
+}
+
 function parseQuery(text) {
   var query = sanitizeFilter(text).toLowerCase()
   var kind = ""
   var rest = query.replace(/^\s+|\s+$/g, "")
-  var spaced = query.match(/^(spell|spells|monster|monsters|creature|creatures|condition|conditions|rule|rules|feat|feats)[:\s]+(.*)$/)
+  var spaced = query.match(/^(\S+)[:\s]+(.*)$/)
   if (spaced) {
-    kind = KIND_ALIASES[spaced[1]] || ""
-    rest = String(spaced[2] || "").replace(/^\s+|\s+$/g, "")
+    kind = resolveKindToken(spaced[1])
+    if (kind)
+      rest = String(spaced[2] || "").replace(/^\s+|\s+$/g, "")
   }
   return { kind: kind, text: rest, raw: query }
+}
+
+function wordHasPrefix(words, token) {
+  for (var i = 0; i < words.length; i++)
+    if (words[i].indexOf(token) === 0)
+      return true
+  return false
+}
+
+function tokensMatchInOrder(words, tokens) {
+  var wi = 0
+  for (var t = 0; t < tokens.length; t++) {
+    var found = false
+    for (; wi < words.length; wi++) {
+      if (words[wi].indexOf(tokens[t]) === 0) {
+        found = true
+        wi++
+        break
+      }
+    }
+    if (!found)
+      return false
+  }
+  return true
+}
+
+function scoreTokens(entry, tokens) {
+  var name = String(entry.name || "").toLowerCase()
+  var words = name.split(/\s+/)
+  var hay = String(entry.haystack || "")
+  if (tokensMatchInOrder(words, tokens))
+    return 2
+  var t
+  var allInName = true
+  for (t = 0; t < tokens.length; t++) {
+    if (name.indexOf(tokens[t]) < 0)
+      allInName = false
+  }
+  if (allInName)
+    return 3
+  for (t = 0; t < tokens.length; t++) {
+    if (hay.indexOf(tokens[t]) < 0)
+      return -1
+  }
+  return 5
 }
 
 function scoreEntry(entry, kind, needle) {
@@ -169,15 +236,19 @@ function scoreEntry(entry, kind, needle) {
       return 50
     return entry.kind === "condition" ? 10 : -1
   }
+  var tokens = needle.split(/\s+/)
+  if (tokens.length > 8)
+    tokens = tokens.slice(0, 8)
+  if (tokens.length > 1)
+    return scoreTokens(entry, tokens)
   var name = String(entry.name || "").toLowerCase()
   if (name === needle)
     return 0
   if (name.indexOf(needle) === 0)
     return 1
   var words = name.split(/\s+/)
-  for (var i = 0; i < words.length; i++)
-    if (words[i].indexOf(needle) === 0)
-      return 2
+  if (wordHasPrefix(words, needle))
+    return 2
   if (name.indexOf(needle) >= 0)
     return 3
   var hay = String(entry.haystack || "")

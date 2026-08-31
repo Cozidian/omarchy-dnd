@@ -350,7 +350,7 @@ Item {
             Text {
               width: parent.width
               visible: root.filterText === ""
-              text: "spell fireball  ·  monster goblin  ·  rule cover  ·  feat alert"
+              text: "mon gob  ·  sp fire  ·  rule cover  ·  feat alert"
               textFormat: Text.PlainText
               color: root.foreground
               opacity: 0.45
