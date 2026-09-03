@@ -932,3 +932,352 @@ function copyText(entry) {
     return ""
   return out
 }
+
+function parseExpr(raw) {
+  var s = String(raw || "").replace(/\s+/g, "")
+  var match = s.match(/^(\d{1,2})d(\d{1,4})([+-]\d{1,3})?$/i)
+  if (!match)
+    return null
+  var n = parseInt(match[1], 10)
+  var sides = parseInt(match[2], 10)
+  var mod = match[3] ? parseInt(match[3], 10) : 0
+  if (n < 1 || n > 40 || sides < 2 || sides > 1000)
+    return null
+  if (mod < -200 || mod > 200)
+    return null
+  return { n: n, sides: sides, mod: mod }
+}
+
+function exprText(expr) {
+  if (!expr)
+    return ""
+  var s = expr.n + "d" + expr.sides
+  if (expr.mod > 0)
+    s += "+" + expr.mod
+  else if (expr.mod < 0)
+    s += String(expr.mod)
+  return s
+}
+
+function rollExpr(expr, extraDice) {
+  var parsed = expr && expr.n ? expr : parseExpr(expr)
+  if (!parsed)
+    return null
+  var n = parsed.n + (extraDice > 0 ? extraDice : 0)
+  if (n > 40)
+    n = 40
+  var rolls = []
+  var dice = 0
+  for (var i = 0; i < n; i++) {
+    var r = 1 + Math.floor(Math.random() * parsed.sides)
+    rolls.push(r)
+    dice += r
+  }
+  return {
+    n: n,
+    sides: parsed.sides,
+    mod: parsed.mod,
+    rolls: rolls,
+    dice: dice,
+    total: dice + parsed.mod,
+    text: exprText({ n: n, sides: parsed.sides, mod: parsed.mod })
+  }
+}
+
+function damageTypeAfter(text, index) {
+  var tail = String(text || "").slice(index).replace(/^\s+/, "")
+  var match = tail.match(/^(Fire|Cold|Lightning|Thunder|Acid|Poison|Necrotic|Radiant|Force|Psychic|Bludgeoning|Piercing|Slashing|Healing)\b/i)
+  return match ? match[1] : ""
+}
+
+function actionRollSpec(label, body) {
+  var text = String(label || "") + " " + String(body || "")
+  if (!/\d+d\d+/i.test(text) && !/Attack Roll:/i.test(text))
+    return null
+  var title = String(label || "").replace(/\.$/, "")
+  if (!title)
+    title = "Roll"
+  var bonus = 0
+  var hasHit = false
+  var hitMatch = text.match(/Attack Roll:\s*([+-]\d+)/i)
+  if (hitMatch) {
+    hasHit = true
+    bonus = parseInt(hitMatch[1], 10)
+    if (bonus < -20 || bonus > 30)
+      bonus = 0
+  }
+  var damage = []
+  var re = /(\d+)\s*\((\d+d\d+(?:\s*[+-]\s*\d+)?)\)/gi
+  var match
+  while ((match = re.exec(text))) {
+    var expr = parseExpr(match[2])
+    if (!expr)
+      continue
+    var type = damageTypeAfter(text, match.index + match[0].length)
+    var prefix = text.slice(Math.max(0, match.index - 12), match.index).toLowerCase()
+    var suffix = text.slice(match.index, match.index + 90).toLowerCase()
+    damage.push({
+      expr: exprText(expr),
+      type: type,
+      optional: prefix.indexOf("plus") >= 0 && suffix.indexOf("advantage") >= 0
+    })
+    if (damage.length >= 6)
+      break
+  }
+  if (!damage.length) {
+    var bare = text.match(/(\d+d\d+(?:\s*[+-]\s*\d+)?)/i)
+    if (bare && !/increases by|increase by/i.test(text.slice(Math.max(0, (bare.index || 0) - 24), bare.index || 0))) {
+      var parsed = parseExpr(bare[1])
+      if (parsed)
+        damage.push({
+          expr: exprText(parsed),
+          type: damageTypeAfter(text, (bare.index || 0) + bare[1].length),
+          optional: false
+        })
+    }
+  }
+  if (!hasHit && !damage.length)
+    return null
+  return {
+    type: "action",
+    title: sanitizeText(title, false, 80),
+    bonus: bonus,
+    hasHit: hasHit,
+    damage: damage
+  }
+}
+
+function extractTextDice(text) {
+  var s = String(text || "")
+  var out = []
+  var seen = {}
+  var re = /(\d+d\d+(?:\s*[+-]\s*\d+)?)/gi
+  var match
+  while ((match = re.exec(s))) {
+    var before = s.slice(Math.max(0, match.index - 28), match.index).toLowerCase()
+    var around = s.slice(Math.max(0, match.index - 12), match.index + match[1].length + 32).toLowerCase()
+    if (before.indexOf("increases by") >= 0 || before.indexOf("increase by") >= 0)
+      continue
+    if (before.indexOf("slot level") >= 0)
+      continue
+    if (/\broll\s+\d+d\d+\s+(to determine|at the|and consult|on the table)/.test(around))
+      continue
+    var expr = parseExpr(match[1])
+    if (!expr)
+      continue
+    var type = damageTypeAfter(s, match.index + match[1].length)
+    var title = exprText(expr) + (type ? " " + type : "")
+    if (seen[title])
+      continue
+    seen[title] = true
+    out.push({ type: "dice", title: title, expr: exprText(expr), kind: type })
+    if (out.length >= 6)
+      break
+  }
+  return out
+}
+
+function parseRangeCell(cell) {
+  var s = String(cell || "").replace(/\s+/g, "").replace(/[–—−]/g, "-")
+  if (!s || s === "—" || s === "-" || s === "–")
+    return null
+  if (s === "00")
+    return { lo: 100, hi: 100 }
+  if (/^\d+$/.test(s)) {
+    var n = parseInt(s, 10)
+    if (s.length >= 2 && n === 0)
+      n = 100
+    return { lo: n, hi: n }
+  }
+  var match = s.match(/^(\d+)-(\d+)$/)
+  if (!match)
+    return null
+  var a = parseInt(match[1], 10)
+  var b = parseInt(match[2], 10)
+  if (match[1].length >= 2 && a === 0)
+    a = 100
+  if (match[2].length >= 2 && b === 0)
+    b = 100
+  if (b < a) {
+    var tmp = a
+    a = b
+    b = tmp
+  }
+  return { lo: a, hi: b }
+}
+
+function tableRollSpec(headers, rows, caption) {
+  if (!rows || rows.length < 2 || rows.length > 40)
+    return null
+  var header0 = String((headers && headers[0]) || "")
+  var cap = String(caption || "")
+  var dieMatch = (header0 + " " + cap).match(/\b1?d(\d{1,3})\b/i)
+  var ranges = []
+  var i
+  for (i = 0; i < rows.length; i++) {
+    var rng = parseRangeCell((rows[i] || [])[0])
+    if (!rng)
+      return null
+    var rest = (rows[i] || []).slice(1).join(" · ")
+    ranges.push({
+      lo: rng.lo,
+      hi: rng.hi,
+      index: i,
+      text: sanitizeText(rest || String((rows[i] || [])[0] || ""), false, 240)
+    })
+  }
+  var min = ranges[0].lo
+  var max = ranges[0].hi
+  for (i = 1; i < ranges.length; i++) {
+    if (ranges[i].lo < min)
+      min = ranges[i].lo
+    if (ranges[i].hi > max)
+      max = ranges[i].hi
+  }
+  var die = dieMatch ? parseInt(dieMatch[1], 10) : 0
+  if (!die) {
+    if (min !== 1 || max < 2 || max > 20)
+      return null
+    if (rows.length > 12 && max > 12)
+      return null
+    die = max
+  }
+  if (die < 2 || die > 100)
+    return null
+  return {
+    type: "table",
+    title: sanitizeText(cap || header0 || "Table", false, 80),
+    die: die,
+    ranges: ranges
+  }
+}
+
+function pickTableRange(spec, value) {
+  if (!spec || !spec.ranges)
+    return null
+  for (var i = 0; i < spec.ranges.length; i++) {
+    if (value >= spec.ranges[i].lo && value <= spec.ranges[i].hi)
+      return spec.ranges[i]
+  }
+  return null
+}
+
+function actionRollJson(label, body) {
+  var spec = actionRollSpec(label, body)
+  return spec ? JSON.stringify(spec) : ""
+}
+
+function tableRollJson(headersJson, rowsJson, caption) {
+  var spec = tableRollSpec(parseJsonArray(headersJson), parseJsonArray(rowsJson), caption)
+  return spec ? JSON.stringify(spec) : ""
+}
+
+function textDiceJson(text) {
+  var list = extractTextDice(text)
+  return list.length ? JSON.stringify(list) : "[]"
+}
+
+function collectRolls(body) {
+  var blocks = bodyBlocks(body)
+  var out = []
+  var i
+  var j
+  for (i = 0; i < blocks.length; i++) {
+    var block = blocks[i]
+    if (block.kind === "list") {
+      var items = block.items || []
+      for (j = 0; j < items.length; j++) {
+        var action = actionRollSpec(items[j].label, items[j].body)
+        if (action)
+          out.push(action)
+      }
+    } else if (block.kind === "table") {
+      var table = tableRollSpec(block.headers, block.rows, block.caption)
+      if (table)
+        out.push(table)
+    } else if (block.kind === "text" || block.kind === "quote") {
+      var dice = extractTextDice(block.text)
+      for (j = 0; j < dice.length; j++)
+        out.push(dice[j])
+    }
+    if (out.length >= 16)
+      break
+  }
+  return out
+}
+
+function collectRollsJson(body) {
+  return JSON.stringify(collectRolls(body))
+}
+
+function executeRoll(specRaw) {
+  var spec = specRaw
+  if (typeof specRaw === "string") {
+    try {
+      spec = JSON.parse(specRaw)
+    } catch (e) {
+      return null
+    }
+  }
+  if (!spec || !spec.type)
+    return null
+  if (spec.type === "dice") {
+    var rolled = rollExpr(spec.expr, 0)
+    if (!rolled)
+      return null
+    return {
+      title: String(spec.title || rolled.text),
+      summary: String(rolled.total),
+      detail: rolled.text + " → " + rolled.rolls.join("+") + (rolled.mod ? (rolled.mod > 0 ? "+" : "") + rolled.mod : ""),
+      tableRow: -1,
+      tableKey: ""
+    }
+  }
+  if (spec.type === "table") {
+    var die = spec.die > 0 ? spec.die : 20
+    var value = 1 + Math.floor(Math.random() * die)
+    var hit = pickTableRange(spec, value)
+    var label = hit ? hit.text : "—"
+    return {
+      title: String(spec.title || "Table"),
+      summary: "d" + die + " → " + value,
+      detail: hit ? (hit.lo === hit.hi ? String(hit.lo) : hit.lo + "–" + hit.hi) + "  " + label : "no matching row",
+      tableRow: hit ? hit.index + 1 : -1,
+      tableKey: String(spec.title || "")
+    }
+  }
+  if (spec.type === "action") {
+    var lines = []
+    var bits = []
+    var d20 = 0
+    if (spec.hasHit) {
+      d20 = 1 + Math.floor(Math.random() * 20)
+      var hitTotal = d20 + (spec.bonus || 0)
+      var tag = d20 === 20 ? " crit" : (d20 === 1 ? " miss" : "")
+      bits.push((d20 === 20 ? "nat 20" : (d20 === 1 ? "nat 1" : String(hitTotal))) + " to hit")
+      lines.push("1d20" + (spec.bonus >= 0 ? "+" + spec.bonus : spec.bonus) + " → " + d20 + (spec.bonus >= 0 ? "+" : "") + spec.bonus + tag)
+    }
+    var extra = d20 === 20 ? true : false
+    var dmg = spec.damage || []
+    for (var i = 0; i < dmg.length; i++) {
+      if (dmg[i].optional)
+        continue
+      var parsed = parseExpr(dmg[i].expr)
+      var more = extra && parsed ? parsed.n : 0
+      var r = rollExpr(parsed, more)
+      if (!r)
+        continue
+      var label = dmg[i].type || "damage"
+      bits.push(r.total + " " + label.toLowerCase())
+      lines.push(r.text + " → " + r.rolls.join("+") + (r.mod ? (r.mod > 0 ? "+" : "") + r.mod : "") + " " + label.toLowerCase())
+    }
+    return {
+      title: String(spec.title || "Attack"),
+      summary: bits.join("  ·  ") || "—",
+      detail: lines.join("   "),
+      tableRow: -1,
+      tableKey: ""
+    }
+  }
+  return null
+}

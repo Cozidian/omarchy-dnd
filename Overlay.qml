@@ -20,6 +20,11 @@ Item {
   property var entries: []
   property string copiedHint: ""
   property string pendingCopy: ""
+  property string rollTitle: ""
+  property string rollSummary: ""
+  property string rollDetail: ""
+  property int rollTableRow: -1
+  property string rollTableKey: ""
 
   property color background: Color.menu.background
   property color foreground: Color.menu.text
@@ -111,8 +116,46 @@ Item {
     return Qt.rgba(c.r, c.g, c.b, a)
   }
 
+  function clearRoll() {
+    root.rollTitle = ""
+    root.rollSummary = ""
+    root.rollDetail = ""
+    root.rollTableRow = -1
+    root.rollTableKey = ""
+  }
+
+  function applyRoll(result) {
+    if (!result) {
+      root.clearRoll()
+      return
+    }
+    root.rollTitle = String(result.title || "")
+    root.rollSummary = String(result.summary || "")
+    root.rollDetail = String(result.detail || "")
+    root.rollTableRow = result.tableRow >= 0 ? result.tableRow : -1
+    root.rollTableKey = String(result.tableKey || "")
+  }
+
+  function performRoll(specJson) {
+    if (!specJson)
+      return
+    root.applyRoll(Search.executeRoll(specJson))
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  function rollPrimary() {
+    var row = root.currentRow()
+    if (!row)
+      return
+    var rolls = Search.collectRolls(row.body)
+    if (!rolls || !rolls.length)
+      return
+    root.applyRoll(Search.executeRoll(JSON.stringify(rolls[0])))
+  }
+
   function rebuildDetail() {
     bodyModel.clear()
+    root.clearRoll()
     var row = root.currentRow()
     var blocks = Search.bodyBlocks(row ? row.body : "")
     for (var i = 0; i < blocks.length; i++) {
@@ -121,8 +164,10 @@ Item {
       var isTable = kind === "table"
       var isList = kind === "list"
       var isStats = kind === "stats"
+      var isText = kind === "text"
       var rows = isTable ? (block.rows || []) : (isStats ? (block.rows || []) : [])
       var items = isList ? (block.items || []) : []
+      var tableRoll = isTable ? Search.tableRollJson(JSON.stringify(block.headers || []), JSON.stringify(rows), block.caption || "") : ""
       bodyModel.append({
         kind: kind,
         text: String(block.text || ""),
@@ -133,7 +178,9 @@ Item {
         headersJson: isTable ? JSON.stringify(block.headers || []) : "[]",
         rowsJson: isTable ? JSON.stringify(rows) : "[]",
         weightsJson: isTable ? JSON.stringify(block.weights || []) : "[]",
-        itemsJson: isList ? JSON.stringify(items) : (isStats ? JSON.stringify(rows) : "[]")
+        itemsJson: isList ? JSON.stringify(items) : (isStats ? JSON.stringify(rows) : "[]"),
+        rollJson: tableRoll,
+        diceJson: isText ? Search.textDiceJson(block.text || "") : "[]"
       })
     }
     if (detailFlick)
@@ -278,6 +325,9 @@ Item {
           } else if (event.key === Qt.Key_C && (event.modifiers & Qt.ControlModifier)) {
             root.copyCurrent()
             event.accepted = true
+          } else if (event.key === Qt.Key_R && (event.modifiers & Qt.ControlModifier)) {
+            root.rollPrimary()
+            event.accepted = true
           } else if (Util.editsFilter(event, root.filterText)) {
             root.setFilter(Util.editedFilter(event, root.filterText))
             event.accepted = true
@@ -364,7 +414,7 @@ Item {
             id: hintText
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
-            text: root.copiedHint !== "" ? root.copiedHint : "Enter copies  ·  Esc closes"
+            text: root.copiedHint !== "" ? root.copiedHint : "Enter copies  ·  Ctrl+R rolls  ·  Esc closes"
             textFormat: Text.PlainText
             color: root.foreground
             opacity: 0.45
@@ -518,6 +568,48 @@ Item {
                   }
                 }
 
+                Rectangle {
+                  visible: root.rollSummary !== ""
+                  width: parent.width
+                  implicitHeight: rollBannerInner.implicitHeight + Style.space(14)
+                  height: implicitHeight
+                  radius: Math.max(6, Math.round(root.cornerRadius * 0.45))
+                  color: root.wash(root.selectedBackground, 0.22)
+                  border.color: root.border
+                  border.width: 1
+
+                  Column {
+                    id: rollBannerInner
+                    x: Style.space(12)
+                    y: Style.space(7)
+                    width: parent.width - Style.space(24)
+                    spacing: Style.space(2)
+
+                    Text {
+                      width: parent.width
+                      text: root.rollTitle !== "" ? root.rollTitle + "  ·  " + root.rollSummary : root.rollSummary
+                      textFormat: Text.PlainText
+                      color: root.foreground
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.body
+                      font.bold: true
+                      wrapMode: Text.WordWrap
+                    }
+
+                    Text {
+                      width: parent.width
+                      visible: root.rollDetail !== ""
+                      text: root.rollDetail
+                      textFormat: Text.PlainText
+                      color: root.foreground
+                      opacity: 0.75
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.caption
+                      wrapMode: Text.WordWrap
+                    }
+                  }
+                }
+
                 Repeater {
                   model: bodyModel
 
@@ -533,6 +625,8 @@ Item {
                     required property string rowsJson
                     required property string weightsJson
                     required property string itemsJson
+                    required property string rollJson
+                    required property string diceJson
 
                     width: detailColumn.width
                     spacing: Style.space(6)
@@ -566,6 +660,51 @@ Item {
                       font.family: root.fontFamily
                       font.pixelSize: Style.font.body
                       wrapMode: Text.WordWrap
+                    }
+
+                    Flow {
+                      width: parent.width
+                      visible: blockCol.kind === "text" && blockCol.diceJson !== "" && blockCol.diceJson !== "[]"
+                      spacing: Style.space(8)
+
+                      Repeater {
+                        model: {
+                          try {
+                            return JSON.parse(blockCol.diceJson)
+                          } catch (e) {
+                            return []
+                          }
+                        }
+
+                        Rectangle {
+                          required property var modelData
+                          radius: height / 2
+                          color: root.wash(root.selectedBackground, 0.28)
+                          border.color: root.border
+                          border.width: 1
+                          implicitHeight: diceChipText.implicitHeight + Style.space(8)
+                          implicitWidth: diceChipText.implicitWidth + Style.space(18)
+                          height: implicitHeight
+                          width: implicitWidth
+
+                          Text {
+                            id: diceChipText
+                            anchors.centerIn: parent
+                            text: "Roll " + String(modelData && modelData.title ? modelData.title : "dice")
+                            textFormat: Text.PlainText
+                            color: root.foreground
+                            font.family: root.fontFamily
+                            font.pixelSize: Style.font.caption
+                            font.bold: true
+                          }
+
+                          MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.performRoll(JSON.stringify(modelData))
+                          }
+                        }
+                      }
                     }
 
                     Flow {
@@ -682,6 +821,9 @@ Item {
                           required property int index
                           width: parent.width
                           spacing: Style.space(8)
+                          readonly property string itemLabel: Search.itemField(blockCol.itemsJson, index, "label")
+                          readonly property string itemBody: Search.itemField(blockCol.itemsJson, index, "body")
+                          readonly property string itemRoll: Search.actionRollJson(itemLabel, itemBody)
 
                           Item {
                             width: Style.space(16)
@@ -712,13 +854,13 @@ Item {
                           }
 
                           Column {
-                            width: parent.width - Style.space(24)
+                            width: parent.width - Style.space(24) - (itemRoll !== "" ? Style.space(64) : 0)
                             spacing: Style.space(2)
 
                             Text {
                               width: parent.width
-                              visible: Search.itemField(blockCol.itemsJson, index, "label") !== ""
-                              text: Search.itemField(blockCol.itemsJson, index, "label")
+                              visible: itemLabel !== ""
+                              text: itemLabel
                               textFormat: Text.PlainText
                               color: root.foreground
                               font.family: root.fontFamily
@@ -729,30 +871,95 @@ Item {
 
                             Text {
                               width: parent.width
-                              text: Search.itemField(blockCol.itemsJson, index, "body")
+                              text: itemBody
                               textFormat: Text.PlainText
                               color: root.foreground
-                              opacity: Search.itemField(blockCol.itemsJson, index, "label") !== "" ? 0.88 : 1
+                              opacity: itemLabel !== "" ? 0.88 : 1
                               font.family: root.fontFamily
                               font.pixelSize: Style.font.body
                               wrapMode: Text.WordWrap
+                            }
+                          }
+
+                          Rectangle {
+                            visible: itemRoll !== ""
+                            radius: height / 2
+                            color: root.wash(root.selectedBackground, 0.32)
+                            border.color: root.border
+                            border.width: 1
+                            implicitHeight: Style.font.caption + Style.space(10)
+                            implicitWidth: rollChipLabel.implicitWidth + Style.space(16)
+                            height: implicitHeight
+                            width: implicitWidth
+                            anchors.top: parent.top
+
+                            Text {
+                              id: rollChipLabel
+                              anchors.centerIn: parent
+                              text: "Roll"
+                              textFormat: Text.PlainText
+                              color: root.foreground
+                              font.family: root.fontFamily
+                              font.pixelSize: Style.font.caption
+                              font.bold: true
+                            }
+
+                            MouseArea {
+                              anchors.fill: parent
+                              cursorShape: Qt.PointingHandCursor
+                              onClicked: root.performRoll(itemRoll)
                             }
                           }
                         }
                       }
                     }
 
-                    Text {
+                    Row {
                       width: parent.width
-                      visible: blockCol.kind === "table" && blockCol.caption !== ""
-                      text: blockCol.caption
-                      textFormat: Text.PlainText
-                      color: root.foreground
-                      opacity: 0.62
-                      font.family: root.fontFamily
-                      font.pixelSize: Style.font.caption
-                      font.bold: true
-                      wrapMode: Text.WordWrap
+                      visible: blockCol.kind === "table" && (blockCol.caption !== "" || blockCol.rollJson !== "")
+                      spacing: Style.space(8)
+
+                      Text {
+                        width: parent.width - (blockCol.rollJson !== "" ? Style.space(80) : 0)
+                        visible: blockCol.caption !== ""
+                        text: blockCol.caption
+                        textFormat: Text.PlainText
+                        color: root.foreground
+                        opacity: 0.62
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.caption
+                        font.bold: true
+                        wrapMode: Text.WordWrap
+                      }
+
+                      Rectangle {
+                        visible: blockCol.rollJson !== ""
+                        radius: height / 2
+                        color: root.wash(root.selectedBackground, 0.32)
+                        border.color: root.border
+                        border.width: 1
+                        implicitHeight: Style.font.caption + Style.space(10)
+                        implicitWidth: tableRollLabel.implicitWidth + Style.space(16)
+                        height: implicitHeight
+                        width: implicitWidth
+
+                        Text {
+                          id: tableRollLabel
+                          anchors.centerIn: parent
+                          text: "Roll"
+                          textFormat: Text.PlainText
+                          color: root.foreground
+                          font.family: root.fontFamily
+                          font.pixelSize: Style.font.caption
+                          font.bold: true
+                        }
+
+                        MouseArea {
+                          anchors.fill: parent
+                          cursorShape: Qt.PointingHandCursor
+                          onClicked: root.performRoll(blockCol.rollJson)
+                        }
+                      }
                     }
 
                     Rectangle {
@@ -782,13 +989,19 @@ Item {
                             readonly property int rowIndex: index
                             readonly property bool isHeader: rowIndex === 0
                             readonly property bool isLast: rowIndex === blockCol.rowCount - 1
+                            readonly property bool isRolled: !isHeader && rowIndex === root.rollTableRow && (
+                              blockCol.caption === root.rollTableKey
+                              || (blockCol.caption === "" && Search.tableCell(blockCol.headersJson, blockCol.rowsJson, 0, 0) === root.rollTableKey)
+                            )
                             implicitHeight: rowInner.implicitHeight + Style.space(10)
                             height: implicitHeight
                             color: tableRow.isHeader
                               ? Qt.rgba(root.selectedBackground.r, root.selectedBackground.g, root.selectedBackground.b, 0.38)
-                              : (tableRow.rowIndex % 2 === 0
-                                  ? Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.04)
-                                  : "transparent")
+                              : (tableRow.isRolled
+                                  ? Qt.rgba(root.selectedBackground.r, root.selectedBackground.g, root.selectedBackground.b, 0.32)
+                                  : (tableRow.rowIndex % 2 === 0
+                                      ? Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.04)
+                                      : "transparent"))
 
                             Row {
                               id: rowInner
