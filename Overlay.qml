@@ -533,7 +533,7 @@ Item {
             Text {
               width: parent.width
               visible: root.filterText === ""
-              text: "mon gob  ·  sp fire  ·  rule cover  ·  feat alert"
+              text: "mon gob  ·  sp fire  ·  weap dagger  ·  mag bag"
               textFormat: Text.PlainText
               color: root.foreground
               opacity: 0.45

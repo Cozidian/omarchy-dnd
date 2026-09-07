@@ -12,7 +12,23 @@ var KIND_ALIASES = {
   rule: "rule",
   rules: "rule",
   feat: "feat",
-  feats: "feat"
+  feats: "feat",
+  item: "item",
+  items: "item",
+  gear: "item",
+  equipment: "item",
+  weapon: "weapon",
+  weapons: "weapon",
+  weap: "weapon",
+  armor: "armor",
+  armour: "armor",
+  shield: "armor",
+  shields: "armor",
+  magic: "magic",
+  mag: "magic",
+  magicitem: "magic",
+  magicitems: "magic",
+  wondrous: "magic"
 }
 
 var KINDS = {
@@ -20,7 +36,11 @@ var KINDS = {
   monster: true,
   condition: true,
   rule: true,
-  feat: true
+  feat: true,
+  item: true,
+  weapon: true,
+  armor: true,
+  magic: true
 }
 
 var MAX_INDEX_BYTES = 4 * 1024 * 1024
@@ -487,6 +507,14 @@ function kindLabel(kind) {
     return "Rule"
   if (kind === "feat")
     return "Feat"
+  if (kind === "item")
+    return "Item"
+  if (kind === "weapon")
+    return "Weapon"
+  if (kind === "armor")
+    return "Armor"
+  if (kind === "magic")
+    return "Magic"
   return "Entry"
 }
 
@@ -665,6 +693,26 @@ function prettyStatLabel(label) {
     return "Classes"
   if (/^prerequisite$/i.test(s))
     return "Prerequisite"
+  if (/^category$/i.test(s))
+    return "Category"
+  if (/^damage$/i.test(s))
+    return "Damage"
+  if (/^cost$/i.test(s))
+    return "Cost"
+  if (/^weight$/i.test(s))
+    return "Weight"
+  if (/^rarity$/i.test(s))
+    return "Rarity"
+  if (/^attunement$/i.test(s))
+    return "Attunement"
+  if (/^properties$/i.test(s))
+    return "Properties"
+  if (/^ac$/i.test(s))
+    return "AC"
+  if (/^stealth$/i.test(s))
+    return "Stealth"
+  if (/^strength$/i.test(s))
+    return "Strength"
   return s
 }
 
@@ -672,7 +720,7 @@ function parseStatLine(line) {
   var s = String(line || "").replace(/^\s+|\s+$/g, "")
   if (!s)
     return null
-  var match = s.match(/^(Casting time|Range|Duration|Components|Classes|Prerequisite):\s*(.+)$/i)
+  var match = s.match(/^(Casting time|Range|Duration|Components|Classes|Prerequisite|Category|Damage|Cost|Weight|Rarity|Attunement|Properties|AC|Stealth|Strength):\s*(.+)$/i)
   if (match)
     return { label: prettyStatLabel(match[1]), value: sanitizeText(match[2], false, 200) }
   if (/^(Cantrip|Level\s+\d+)\b/i.test(s) && s.length < 48)

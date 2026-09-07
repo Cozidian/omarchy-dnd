@@ -95,6 +95,89 @@ class SanitizeTests(unittest.TestCase):
     def test_entry_rejects_unknown_kind(self):
         self.assertIsNone(fetch.entry("wizard", "Name", "sum", "body", "tags"))
 
+    def test_format_item_weapon_uses_nested_stats(self):
+        row = {
+            "name": "Dagger",
+            "desc": "A dagger.",
+            "category": {"name": "Weapon"},
+            "cost": "2.00",
+            "weight": "1.000",
+            "weight_unit": "lb",
+            "weapon": {
+                "damage_dice": "1d4",
+                "damage_type": {"name": "Piercing"},
+                "properties": [
+                    {
+                        "property": {"name": "Finesse", "desc": "Use Str or Dex."},
+                        "detail": None,
+                    },
+                    {
+                        "property": {"name": "Thrown", "desc": "You can throw it."},
+                        "detail": "Range 20/60",
+                    },
+                ],
+            },
+        }
+        item = fetch.format_item(row)
+        self.assertIsNotNone(item)
+        self.assertEqual(item["kind"], "weapon")
+        self.assertIn("1d4 Piercing", item["summary"])
+        self.assertIn("Damage: 1d4 Piercing", item["body"])
+        self.assertIn("Cost: 2 gp", item["body"])
+        self.assertIn("Weight: 1 lb", item["body"])
+        self.assertIn("Thrown (Range 20/60).", item["body"])
+        self.assertNotIn("<", item["body"])
+
+    def test_format_magic_keeps_rarity_and_attunement(self):
+        row = {
+            "name": '<b>Bag of Holding</b>',
+            "desc": "<p>This bag is bigger inside.</p>",
+            "category": {"name": "Wondrous Item"},
+            "rarity": {"name": "Uncommon"},
+            "requires_attunement": True,
+            "attunement_detail": "",
+            "cost": "0.00",
+            "weight": "15.000",
+            "weight_unit": "lb",
+        }
+        item = fetch.format_magic(row)
+        self.assertIsNotNone(item)
+        self.assertEqual(item["kind"], "magic")
+        self.assertEqual(item["name"], "Bag of Holding")
+        self.assertIn("Uncommon", item["summary"])
+        self.assertIn("Rarity: Uncommon", item["body"])
+        self.assertIn("Attunement: requires attunement", item["body"])
+        self.assertIn("bigger inside", item["body"])
+        self.assertNotIn("<", item["body"])
+
+    def test_from_srd_filters_foreign_documents(self):
+        self.assertTrue(fetch.from_srd({"name": "X"}))
+        self.assertTrue(fetch.from_srd({"document": {"key": "srd-2024"}}))
+        self.assertFalse(fetch.from_srd({"document": {"key": "vom"}}))
+        self.assertFalse(fetch.from_srd({"document": {"key": "srd-2014"}}))
+
+    def test_classify_armor_and_cost_text(self):
+        self.assertEqual(fetch.cost_text("25.00"), "25 gp")
+        self.assertEqual(fetch.cost_text("0.10"), "1 sp")
+        self.assertEqual(fetch.cost_text("0.00"), "")
+        armor = fetch.format_item({
+            "name": "Plate Armor",
+            "desc": "Heavy armor.",
+            "category": {"name": "Armor"},
+            "armor": {
+                "ac_display": "18",
+                "grants_stealth_disadvantage": True,
+                "strength_score_required": 15,
+            },
+            "cost": "1500.00",
+            "weight": "65.000",
+            "weight_unit": "lb",
+        })
+        self.assertEqual(armor["kind"], "armor")
+        self.assertIn("AC: 18", armor["body"])
+        self.assertIn("Stealth: Disadvantage", armor["body"])
+        self.assertIn("Strength: 15", armor["body"])
+
 
 class RedirectTests(unittest.TestCase):
     def test_allowed_url_https_open5e_only(self):

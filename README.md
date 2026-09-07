@@ -4,7 +4,7 @@ Summon, type, read, dismiss. A 5e SRD search overlay for the Omarchy bar — the
 
 Plugin id: `io.github.cozidian.dnd`
 
-D&D Beyond has no public API, so this does not talk to your character sheet. It searches a local snapshot of the **System Reference Document 5.2** (the 2024 / “5.5” rules, CC BY 4.0) via [Open5e](https://open5e.com/): conditions, spells, monsters, rules, and feats.
+D&D Beyond has no public API, so this does not talk to your character sheet. It searches a local snapshot of the **System Reference Document 5.2** (the 2024 / “5.5” rules, CC BY 4.0) via [Open5e](https://open5e.com/): conditions, spells, monsters, rules, feats, mundane items, weapons, armor, and magic items.
 
 ## Install
 
@@ -34,10 +34,14 @@ Suggested Hyprland bind (pick a chord that is free):
 o.bind("SUPER + SHIFT + D", "SRD lookup", "omarchy-shell shell toggle io.github.cozidian.dnd")
 ```
 
-Type to search. Prefixes narrow the index (`mon`, `sp`, `co`, `ru`, `fe` work too):
+Type to search. Prefixes narrow the index (`mon`, `sp`, `co`, `ru`, `fe`, `weap`, `item`, `mag` work too):
 
 - `spell fireball` / `sp fire`
 - `monster goblin` / `mon gob`
+- `weapon dagger` / `weap dag`
+- `magic bag of holding` / `mag bag`
+- `item rope`
+- `armor plate`
 - `rule cover`
 - `feat alert`
 - `condition prone`

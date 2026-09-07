@@ -15,7 +15,7 @@ BASE = "https://api.open5e.com/v2"
 ALLOWED_HOST = "api.open5e.com"
 DOC = "srd-2024"
 UA = "omarchy-dnd-srd-lookup/1.0 (https://github.com/Cozidian/omarchy-dnd)"
-KINDS = frozenset({"spell", "monster", "condition", "rule", "feat"})
+KINDS = frozenset({"spell", "monster", "condition", "rule", "feat", "item", "weapon", "armor", "magic"})
 
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 MAX_PAGES = 40
@@ -309,6 +309,207 @@ def format_rule(row: dict) -> dict:
     return entry("rule", name, first, body, f"{name} rule")
 
 
+def from_srd(row: dict) -> bool:
+    doc = row.get("document")
+    if not isinstance(doc, dict):
+        return True
+    key = str(doc.get("key") or "")
+    return not key or key == DOC
+
+
+def nested_name(value) -> str:
+    if isinstance(value, dict):
+        return str(value.get("name") or "").strip()
+    return str(value or "").strip()
+
+
+def cost_text(value) -> str:
+    if value in (None, "", "0", "0.0", "0.00"):
+        return ""
+    try:
+        amount = float(value)
+    except (TypeError, ValueError):
+        return str(value).strip()
+    if amount <= 0:
+        return ""
+    if amount >= 1:
+        scale, unit = 1, "gp"
+    elif amount >= 0.1:
+        scale, unit = 10, "sp"
+    else:
+        scale, unit = 100, "cp"
+    text = f"{amount * scale:.2f}".rstrip("0").rstrip(".")
+    return f"{text} {unit}"
+
+
+def weight_text(row: dict) -> str:
+    raw = row.get("weight")
+    if raw in (None, "", "0", "0.0", "0.000"):
+        return ""
+    try:
+        amount = float(raw)
+    except (TypeError, ValueError):
+        amount = None
+    if amount is not None:
+        if amount <= 0:
+            return ""
+        text = f"{amount:.3f}".rstrip("0").rstrip(".")
+    else:
+        text = str(raw).strip()
+        if not text:
+            return ""
+    unit = str(row.get("weight_unit") or "lb").strip() or "lb"
+    if unit in ("pounds", "pound"):
+        unit = "lb"
+    return f"{text} {unit}"
+
+
+def format_properties(props) -> list[str]:
+    if not isinstance(props, list):
+        return []
+    lines = []
+    for row in props:
+        if not isinstance(row, dict):
+            continue
+        prop = row.get("property") if isinstance(row.get("property"), dict) else {}
+        name = str(prop.get("name") or "").strip()
+        if not name:
+            continue
+        detail = str(row.get("detail") or "").strip()
+        desc = str(prop.get("desc") or "").strip()
+        title = f"{name} ({detail})" if detail else name
+        lines.append(f"{title}. {desc}" if desc else title)
+    return lines
+
+
+def weapon_stat_lines(weapon) -> list[str]:
+    if not isinstance(weapon, dict):
+        return []
+    lines = []
+    dice = str(weapon.get("damage_dice") or "").strip()
+    dtype = nested_name(weapon.get("damage_type"))
+    if dice:
+        lines.append("Damage: " + (f"{dice} {dtype}".strip() if dtype else dice))
+    names = []
+    for row in weapon.get("properties") or []:
+        if not isinstance(row, dict):
+            continue
+        prop = row.get("property") if isinstance(row.get("property"), dict) else {}
+        name = str(prop.get("name") or "").strip()
+        if not name:
+            continue
+        detail = str(row.get("detail") or "").strip()
+        names.append(f"{name} ({detail})" if detail else name)
+    if names:
+        lines.append("Properties: " + ", ".join(names))
+    rng = weapon.get("range")
+    long_rng = weapon.get("long_range")
+    try:
+        short = int(rng) if rng not in (None, "", 0, "0") else 0
+    except (TypeError, ValueError):
+        short = 0
+    try:
+        long = int(long_rng) if long_rng not in (None, "", 0, "0") else 0
+    except (TypeError, ValueError):
+        long = 0
+    if short or long:
+        if long and long != short:
+            lines.append(f"Range: {short}/{long}")
+        else:
+            lines.append(f"Range: {short}")
+    return lines
+
+
+def armor_stat_lines(armor) -> list[str]:
+    if not isinstance(armor, dict):
+        return []
+    lines = []
+    ac = armor.get("ac_display")
+    if ac in (None, ""):
+        ac = armor.get("ac_base")
+    if ac not in (None, ""):
+        lines.append(f"AC: {ac}")
+    if armor.get("grants_stealth_disadvantage"):
+        lines.append("Stealth: Disadvantage")
+    req = armor.get("strength_score_required")
+    if req not in (None, "", 0, "0"):
+        lines.append(f"Strength: {req}")
+    return lines
+
+
+def classify_item(row: dict) -> str:
+    cat = nested_name(row.get("category")).lower()
+    if isinstance(row.get("weapon"), dict) or cat == "weapon":
+        return "weapon"
+    if isinstance(row.get("armor"), dict) or cat in ("armor", "shield"):
+        return "armor"
+    return "item"
+
+
+def format_gear(row: dict, kind: str, summary: str, extra_tags: list[str]) -> dict | None:
+    name = row.get("name") or ""
+    if not name:
+        return None
+    cat = nested_name(row.get("category"))
+    parts = []
+    if cat:
+        parts.append(f"Category: {cat}")
+    rarity = nested_name(row.get("rarity"))
+    if rarity:
+        parts.append(f"Rarity: {rarity}")
+    if row.get("requires_attunement"):
+        detail = str(row.get("attunement_detail") or "").strip()
+        parts.append("Attunement: " + (detail if detail else "requires attunement"))
+    parts.extend(weapon_stat_lines(row.get("weapon")))
+    parts.extend(armor_stat_lines(row.get("armor")))
+    cost = cost_text(row.get("cost"))
+    if cost:
+        parts.append(f"Cost: {cost}")
+    wt = weight_text(row)
+    if wt:
+        parts.append(f"Weight: {wt}")
+    desc = str(row.get("desc") or "").strip()
+    props = []
+    weapon = row.get("weapon") if isinstance(row.get("weapon"), dict) else {}
+    props.extend(format_properties(weapon.get("properties")))
+    chunks = []
+    if parts:
+        chunks.append("\n".join(parts))
+    if desc:
+        chunks.append(desc)
+    if props:
+        chunks.append("\n".join(props))
+    body = "\n\n".join(chunks).strip()
+    if not body:
+        return None
+    tags = " ".join([name, kind, cat] + extra_tags).lower()
+    return entry(kind, name, summary or cat or kind, body, tags)
+
+
+def format_item(row: dict) -> dict | None:
+    kind = classify_item(row)
+    cat = nested_name(row.get("category"))
+    weapon = row.get("weapon") if isinstance(row.get("weapon"), dict) else {}
+    armor = row.get("armor") if isinstance(row.get("armor"), dict) else {}
+    summary_bits = [cat] if cat else []
+    dice = str(weapon.get("damage_dice") or "").strip()
+    dtype = nested_name(weapon.get("damage_type"))
+    if dice:
+        summary_bits.append(f"{dice} {dtype}".strip() if dtype else dice)
+    ac = armor.get("ac_display") or armor.get("ac_base")
+    if ac not in (None, ""):
+        summary_bits.append(f"AC {ac}")
+    summary = " · ".join(str(b) for b in summary_bits if b)
+    return format_gear(row, kind, summary, ["item", "gear", kind])
+
+
+def format_magic(row: dict) -> dict | None:
+    cat = nested_name(row.get("category"))
+    rarity = nested_name(row.get("rarity"))
+    summary = " · ".join(b for b in [rarity, cat] if b)
+    return format_gear(row, "magic", summary or "Magic item", ["magic", "item", rarity, cat])
+
+
 def format_feat(row: dict) -> dict | None:
     name = row.get("name") or ""
     if not name:
@@ -450,24 +651,59 @@ def main() -> int:
         if item:
             feats.append(item)
 
-    entries = conditions + spells + monsters + rules + feats
+    print("items…", file=sys.stderr)
+    gear = [
+        item
+        for row in paginate(
+            "/items/",
+            {
+                "document__key": DOC,
+                "limit": 50,
+                "fields": "name,key,desc,category,weapon,armor,size,weight,weight_unit,cost,document",
+            },
+        )
+        if from_srd(row) and (item := format_item(row))
+    ]
+
+    print("magic items…", file=sys.stderr)
+    magic = [
+        item
+        for row in paginate(
+            "/magicitems/",
+            {
+                "document__key__in": DOC,
+                "limit": 50,
+                "fields": "name,key,desc,category,rarity,weapon,armor,weight,weight_unit,cost,requires_attunement,attunement_detail,document",
+            },
+        )
+        if from_srd(row) and (item := format_magic(row))
+    ]
+
+    entries = conditions + spells + monsters + rules + feats + gear + magic
     entries = [e for e in entries if e and e.get("name") and e.get("body")]
-    entries = entries[:MAX_ENTRIES]
+    unique = []
+    seen = set()
+    for row in entries:
+        key = (row["kind"], row["name"].lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(row)
+    entries = unique[:MAX_ENTRIES]
     entries.sort(key=lambda e: (e["kind"], e["name"].lower()))
+
+    counts = {kind: 0 for kind in ("condition", "spell", "monster", "rule", "feat", "item", "weapon", "armor", "magic")}
+    for row in entries:
+        if row["kind"] in counts:
+            counts[row["kind"]] += 1
+    counts["total"] = len(entries)
 
     payload = {
         "version": 1,
         "document": DOC,
         "documentName": "System Reference Document 5.2",
         "source": "https://api.open5e.com/v2/",
-        "counts": {
-            "condition": len(conditions),
-            "spell": len(spells),
-            "monster": len(monsters),
-            "rule": len(rules),
-            "feat": len(feats),
-            "total": len(entries),
-        },
+        "counts": counts,
         "entries": entries,
     }
     dest.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")

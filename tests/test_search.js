@@ -102,6 +102,10 @@ function testFuzzyKindPrefixAndTokens() {
   assert.strictEqual(feat.kind, "");
   const fe = ctx.parseQuery("fe alert");
   assert.strictEqual(fe.kind, "feat");
+  assert.strictEqual(ctx.parseQuery("weap dag").kind, "weapon");
+  assert.strictEqual(ctx.parseQuery("mag bag").kind, "magic");
+  assert.strictEqual(ctx.parseQuery("item rope").kind, "item");
+  assert.strictEqual(ctx.parseQuery("armor plate").kind, "armor");
 }
 
 function testSnapshotParsesUnderCaps() {
@@ -117,6 +121,15 @@ function testSnapshotParsesUnderCaps() {
   assert.ok(gobs.length >= 1);
   assert.ok(gobs.every(e => e.kind === "monster"));
   assert.ok(gobs.some(e => String(e.name).toLowerCase().indexOf("goblin") >= 0));
+  const kinds = {};
+  for (const row of entries)
+    kinds[row.kind] = (kinds[row.kind] || 0) + 1;
+  assert.ok((kinds.weapon || 0) >= 1, "snapshot should include weapons");
+  assert.ok((kinds.magic || 0) >= 1, "snapshot should include magic items");
+  const dagger = ctx.filterEntries(entries, "weap dagger", 80);
+  assert.ok(dagger.some(e => e.kind === "weapon" && String(e.name).toLowerCase() === "dagger"));
+  const bag = ctx.filterEntries(entries, "mag bag", 80);
+  assert.ok(bag.some(e => e.kind === "magic" && String(e.name).toLowerCase().indexOf("bag of holding") >= 0));
   for (const row of entries) {
     assert.ok(row.name.length <= ctx.MAX_NAME_CHARS);
     assert.ok(row.body.length <= ctx.MAX_BODY_CHARS);
@@ -406,6 +419,9 @@ function testSnapshotTablesParse() {
   let tableBlocks = 0;
   for (const row of entries) {
     if (!/\|[\s]*:?-{2,}/.test(row.body))
+      continue;
+    const unquoted = String(row.body).split("\n").filter(line => !/^\s*>/.test(line)).join("\n");
+    if (!/\|[\s]*:?-{2,}/.test(unquoted))
       continue;
     tableEntries++;
     const tables = ctx.bodyBlocks(row.body).filter(b => b.kind === "table");
