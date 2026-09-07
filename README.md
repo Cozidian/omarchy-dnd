@@ -48,7 +48,7 @@ Type to search. Prefixes narrow the index (`mon`, `sp`, `co`, `ru`, `fe`, `weap`
 
 Spaces split tokens, so `red drag` matches Adult Red Dragon and `fire ball` matches Fireball.
 
-With an empty query, the list is the conditions — the thing you look up mid-turn. Lookups you copy, roll, or leave via Esc also land in **Recent** (last 8) above those conditions. **Ctrl+P** pins an entry so it stays at the top. Pins and recents are kind+name refs in `~/.local/state/omarchy/dnd-recents.json`, resolved against the current snapshot.
+With an empty query, the list is the conditions — the thing you look up mid-turn. **Ctrl+P** pins the current entry at the top (up to eight). Pins are kind+name refs in `~/.local/state/omarchy/dnd-recents.json`, resolved against the current snapshot.
 
 - **Up / Down** move the result list
 - **Ctrl+Up / Ctrl+Down** scroll the entry on the right

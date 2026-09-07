@@ -152,7 +152,7 @@ function testSanitizeFilterCapsAndStrips() {
   assert.ok(cleaned.startsWith("foo"));
 }
 
-function testRecentsStateRoundtripAndCaps() {
+function testPinsStateRoundtripAndCaps() {
   const dirty = {
     version: 1,
     pins: [
@@ -162,38 +162,23 @@ function testRecentsStateRoundtripAndCaps() {
       { kind: "monster", name: "Goblin" }
     ],
     recents: [
-      { kind: "rule", name: "Cover" },
-      { kind: "rule", name: "Cover" },
-      "nope"
+      { kind: "rule", name: "Cover" }
     ]
   };
   const state = ctx.parseState(JSON.stringify(dirty));
   assert.strictEqual(state.pins.length, 2);
   assert.strictEqual(state.pins[0].name, "Goblin");
   assert.strictEqual(state.pins[1].name, "Fireball");
-  assert.strictEqual(state.recents.length, 1);
-  assert.strictEqual(state.recents[0].name, "Cover");
-  const raw = ctx.serializeState(state.pins, state.recents);
+  assert.strictEqual(state.recents, undefined);
+  const raw = ctx.serializeState(state.pins);
+  assert.ok(!raw.includes("recents"));
   const again = ctx.parseState(raw);
   assert.ok(ctx.sameRefs(again.pins, state.pins));
-  assert.ok(ctx.sameRefs(again.recents, state.recents));
-  assert.strictEqual(ctx.parseState("x".repeat(ctx.MAX_STATE_BYTES + 1)).recents.length, 0);
+  assert.strictEqual(ctx.parseState("x".repeat(ctx.MAX_STATE_BYTES + 1)).pins.length, 0);
   assert.strictEqual(ctx.parseState("{not json").pins.length, 0);
 }
 
-function testRememberAndPin() {
-  let recents = [];
-  recents = ctx.rememberRef(recents, "rule", "Cover");
-  recents = ctx.rememberRef(recents, "spell", "Fireball");
-  recents = ctx.rememberRef(recents, "rule", "Cover");
-  assert.strictEqual(recents.length, 2);
-  assert.strictEqual(recents[0].name, "Cover");
-  assert.strictEqual(recents[1].name, "Fireball");
-  for (let i = 0; i < 12; i++)
-    recents = ctx.rememberRef(recents, "spell", "Spell " + i);
-  assert.strictEqual(recents.length, ctx.MAX_RECENTS);
-  assert.strictEqual(recents[0].name, "Spell 11");
-
+function testTogglePin() {
   let pins = [];
   pins = ctx.togglePin(pins, "monster", "Goblin");
   pins = ctx.togglePin(pins, "monster", "Goblin");
@@ -210,7 +195,7 @@ function testRememberAndPin() {
   assert.ok(ctx.sameRefs(stuck, pins));
 }
 
-function testEmptyQueryPrefersPinsAndRecents() {
+function testEmptyQueryPrefersPins() {
   const entries = ctx.parseIndex(JSON.stringify(indexOf([
     { kind: "condition", name: "Prone", summary: "s", body: "You are prone.", tags: "prone" },
     { kind: "condition", name: "Blinded", summary: "s", body: "You can't see.", tags: "blinded" },
@@ -221,17 +206,16 @@ function testEmptyQueryPrefersPinsAndRecents() {
   assert.ok(plain.every(e => e.kind === "condition"));
   assert.ok(plain.every(e => e.group === ""));
 
-  const pins = [{ kind: "monster", name: "Goblin" }];
-  const recents = [{ kind: "rule", name: "Cover" }, { kind: "condition", name: "Prone" }];
-  const mixed = ctx.filterEntries(entries, "", 80, pins, recents);
-  assert.strictEqual(mixed.map(e => e.name).join(","), "Goblin,Cover,Prone,Blinded");
+  const pins = [{ kind: "monster", name: "Goblin" }, { kind: "condition", name: "Prone" }];
+  const mixed = ctx.filterEntries(entries, "", 80, pins);
+  assert.strictEqual(mixed.map(e => e.name).join(","), "Goblin,Prone,Blinded");
   assert.strictEqual(mixed[0].group, "Pinned");
-  assert.strictEqual(mixed[1].group, "Recent");
-  assert.strictEqual(mixed[2].group, "Recent");
-  assert.strictEqual(mixed[3].group, "Conditions");
+  assert.strictEqual(mixed[1].group, "Pinned");
+  assert.strictEqual(mixed[2].group, "Conditions");
   assert.strictEqual(mixed[0].pinned, 1);
+  assert.ok(!mixed.some(e => e.name === "Cover"));
 
-  const missing = ctx.filterEntries(entries, "", 80, [{ kind: "spell", name: "Missing" }], recents);
+  const missing = ctx.filterEntries(entries, "", 80, [{ kind: "spell", name: "Missing" }]);
   assert.ok(!missing.some(e => e.name === "Missing"));
 }
 
@@ -496,9 +480,9 @@ const tests = [
   testFuzzyKindPrefixAndTokens,
   testSnapshotParsesUnderCaps,
   testSanitizeFilterCapsAndStrips,
-  testRecentsStateRoundtripAndCaps,
-  testRememberAndPin,
-  testEmptyQueryPrefersPinsAndRecents,
+  testPinsStateRoundtripAndCaps,
+  testTogglePin,
+  testEmptyQueryPrefersPins,
   testCycleIndexWraps,
   testItemIntKeepsZero,
   testAdvantageKeepsHigherD20,

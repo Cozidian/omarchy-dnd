@@ -28,7 +28,6 @@ Item {
   property int selectedRoll: 0
   property int rollCount: 0
   property var pins: []
-  property var recents: []
 
   property color background: Color.menu.background
   property color foreground: Color.menu.text
@@ -53,7 +52,7 @@ Item {
   }
   readonly property string dataPath: root.pluginDir ? root.pluginDir + "/data/srd.json" : ""
   readonly property string indexReaderScript: root.pluginDir ? root.pluginDir + "/scripts/read-index.py" : ""
-  readonly property string recentsPath: (Quickshell.env("HOME") || "") + "/.local/state/omarchy/dnd-recents.json"
+  readonly property string pinsPath: (Quickshell.env("HOME") || "") + "/.local/state/omarchy/dnd-recents.json"
 
   function open(payloadJson) {
     root.opened = true
@@ -66,14 +65,10 @@ Item {
   }
 
   function close() {
-    if (root.filterText)
-      root.rememberCurrent()
     root.opened = false
   }
 
   function dismiss() {
-    if (root.filterText)
-      root.rememberCurrent()
     root.opened = false
     if (root.shell && typeof root.shell.hide === "function")
       root.shell.hide((root.manifest && root.manifest.id) || "io.github.cozidian.dnd")
@@ -100,7 +95,7 @@ Item {
   }
 
   function rebuildDisplay() {
-    var out = Search.filterEntries(root.entries, root.filterText, 80, root.pins, root.recents)
+    var out = Search.filterEntries(root.entries, root.filterText, 80, root.pins)
     displayModel.clear()
     for (var i = 0; i < out.length; i++) {
       displayModel.append({
@@ -153,7 +148,6 @@ Item {
     if (rollIndex >= 0)
       root.selectedRoll = rollIndex
     root.applyRoll(Search.executeRoll(specJson, advantage ? { advantage: true } : null))
-    root.rememberCurrent()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
@@ -169,7 +163,6 @@ Item {
       index = 0
     root.selectedRoll = index
     root.applyRoll(Search.executeRoll(JSON.stringify(rolls[index]), advantage ? { advantage: true } : null))
-    root.rememberCurrent()
   }
 
   function cycleRoll(delta) {
@@ -242,17 +235,11 @@ Item {
   }
 
   function setFilter(nextFilter) {
-    var next = Search.sanitizeFilter(nextFilter)
-    var row = (root.filterText && !next) ? root.currentRow() : null
-    if (row)
-      root.rememberCurrent()
-    root.filterText = next
+    root.filterText = Search.sanitizeFilter(nextFilter)
     root.selectedIndex = 0
     root.cursorActive = true
     root.copiedHint = ""
     root.rebuildDisplay()
-    if (row && !next)
-      root.selectNamed(row.kind, row.name)
   }
 
   function selectNamed(kind, name) {
@@ -268,32 +255,19 @@ Item {
     }
   }
 
-  function loadRecents(raw) {
+  function loadPins(raw) {
     var state = Search.parseState(raw)
-    if (Search.sameRefs(state.pins, root.pins) && Search.sameRefs(state.recents, root.recents))
+    if (Search.sameRefs(state.pins, root.pins))
       return
     root.pins = state.pins
-    root.recents = state.recents
     if (root.opened)
       root.rebuildDisplay()
   }
 
-  function saveRecents() {
-    if (!root.recentsPath)
+  function savePins() {
+    if (!root.pinsPath)
       return
-    recentsFile.setText(Search.serializeState(root.pins, root.recents))
-  }
-
-  function rememberCurrent() {
-    var row = root.currentRow()
-    if (!row)
-      return false
-    var next = Search.rememberRef(root.recents, row.kind, row.name)
-    if (Search.sameRefs(next, root.recents))
-      return false
-    root.recents = next
-    root.saveRecents()
-    return true
+    pinsFile.setText(Search.serializeState(root.pins))
   }
 
   function togglePinCurrent() {
@@ -310,7 +284,7 @@ Item {
     root.pins = Search.togglePin(root.pins, kind, name)
     root.copiedHint = Search.isPinned(root.pins, kind, name) ? "Pinned" : "Unpinned"
     copiedTimer.restart()
-    root.saveRecents()
+    root.savePins()
     root.rebuildDisplay()
     root.selectNamed(kind, name)
   }
@@ -354,8 +328,6 @@ Item {
     if (!row) return
     var text = Search.copyText(row)
     if (!text || text.indexOf("\0") !== -1) return
-    var kind = row.kind
-    var name = row.name
     root.pendingCopy = text
     if (copier.running)
       copier.running = false
@@ -363,11 +335,6 @@ Item {
     copier.running = true
     root.copiedHint = "Copied"
     copiedTimer.restart()
-    root.rememberCurrent()
-    if (!root.filterText) {
-      root.rebuildDisplay()
-      root.selectNamed(kind, name)
-    }
   }
 
   onSelectedIndexChanged: root.rebuildDetail()
@@ -391,13 +358,13 @@ Item {
   }
 
   FileView {
-    id: recentsFile
-    path: root.recentsPath
+    id: pinsFile
+    path: root.pinsPath
     watchChanges: true
     atomicWrites: true
     printErrors: false
-    onLoaded: root.loadRecents(text())
-    onLoadFailed: root.loadRecents("")
+    onLoaded: root.loadPins(text())
+    onLoadFailed: root.loadPins("")
     onFileChanged: reload()
   }
 

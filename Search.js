@@ -52,7 +52,6 @@ var MAX_TAGS_CHARS = 240
 var MAX_HAYSTACK_CHARS = 1024
 var MAX_FILTER_CHARS = 120
 var MAX_RESULTS = 80
-var MAX_RECENTS = 8
 var MAX_PINS = 8
 var MAX_STATE_BYTES = 16 * 1024
 var MAX_BODY_BLOCKS = 80
@@ -323,7 +322,7 @@ function sameRefs(a, b) {
 function parseRefList(value, cap) {
   if (!Array.isArray(value))
     return []
-  var limit = cap > 0 ? cap : MAX_RECENTS
+  var limit = cap > 0 ? cap : MAX_PINS
   var out = []
   var seen = {}
   for (var i = 0; i < value.length && out.length < limit; i++) {
@@ -343,7 +342,7 @@ function parseRefList(value, cap) {
 }
 
 function parseState(raw) {
-  var empty = { pins: [], recents: [] }
+  var empty = { pins: [] }
   var text = String(raw || "")
   if (!text || text.length > MAX_STATE_BYTES)
     return empty
@@ -355,16 +354,14 @@ function parseState(raw) {
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
     return empty
   return {
-    pins: parseRefList(parsed.pins, MAX_PINS),
-    recents: parseRefList(parsed.recents, MAX_RECENTS)
+    pins: parseRefList(parsed.pins, MAX_PINS)
   }
 }
 
-function serializeState(pins, recents) {
+function serializeState(pins) {
   return JSON.stringify({
     version: 1,
-    pins: parseRefList(pins, MAX_PINS),
-    recents: parseRefList(recents, MAX_RECENTS)
+    pins: parseRefList(pins, MAX_PINS)
   }) + "\n"
 }
 
@@ -394,21 +391,6 @@ function isPinned(pins, kind, name) {
   return false
 }
 
-function rememberRef(recents, kind, name) {
-  var ref = entryRef(kind, name)
-  var list = recents || []
-  if (!ref)
-    return list
-  var out = [ref]
-  var key = refKey(ref)
-  for (var i = 0; i < list.length && out.length < MAX_RECENTS; i++) {
-    if (!list[i] || refKey(list[i]) === key)
-      continue
-    out.push({ kind: list[i].kind, name: list[i].name })
-  }
-  return out
-}
-
 function togglePin(pins, kind, name) {
   var ref = entryRef(kind, name)
   var list = pins || []
@@ -434,11 +416,10 @@ function togglePin(pins, kind, name) {
   return out
 }
 
-function composeEmptyQuery(entries, pins, recents) {
+function composeEmptyQuery(entries, pins) {
   var list = entries || []
   var pinRefs = pins || []
-  var recentRefs = recents || []
-  var grouped = pinRefs.length > 0 || recentRefs.length > 0
+  var grouped = pinRefs.length > 0
   var out = []
   var seen = {}
 
@@ -455,8 +436,6 @@ function composeEmptyQuery(entries, pins, recents) {
   var i
   for (i = 0; i < pinRefs.length; i++)
     push(findEntry(list, pinRefs[i].kind, pinRefs[i].name), "Pinned", true)
-  for (i = 0; i < recentRefs.length; i++)
-    push(findEntry(list, recentRefs[i].kind, recentRefs[i].name), "Recent", false)
   for (i = 0; i < list.length; i++) {
     if (list[i] && list[i].kind === "condition")
       push(list[i], "Conditions", false)
@@ -464,14 +443,14 @@ function composeEmptyQuery(entries, pins, recents) {
   return out
 }
 
-function filterEntries(entries, text, limit, pins, recents) {
+function filterEntries(entries, text, limit, pins) {
   var parsed = parseQuery(text)
   var cap = limit > 0 ? limit : MAX_RESULTS
   var list = entries || []
   if (list.length > MAX_ENTRIES)
     list = list.slice(0, MAX_ENTRIES)
   if (!parsed.kind && !parsed.text)
-    return composeEmptyQuery(list, pins, recents)
+    return composeEmptyQuery(list, pins)
   var scored = []
   for (var i = 0; i < list.length; i++) {
     var entry = list[i]
