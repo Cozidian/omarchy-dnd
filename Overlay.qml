@@ -25,6 +25,8 @@ Item {
   property string rollDetail: ""
   property int rollTableRow: -1
   property string rollTableKey: ""
+  property var pins: []
+  property var recents: []
 
   property color background: Color.menu.background
   property color foreground: Color.menu.text
@@ -49,6 +51,7 @@ Item {
   }
   readonly property string dataPath: root.pluginDir ? root.pluginDir + "/data/srd.json" : ""
   readonly property string indexReaderScript: root.pluginDir ? root.pluginDir + "/scripts/read-index.py" : ""
+  readonly property string recentsPath: (Quickshell.env("HOME") || "") + "/.local/state/omarchy/dnd-recents.json"
 
   function open(payloadJson) {
     root.opened = true
@@ -61,10 +64,14 @@ Item {
   }
 
   function close() {
+    if (root.filterText)
+      root.rememberCurrent()
     root.opened = false
   }
 
   function dismiss() {
+    if (root.filterText)
+      root.rememberCurrent()
     root.opened = false
     if (root.shell && typeof root.shell.hide === "function")
       root.shell.hide((root.manifest && root.manifest.id) || "io.github.cozidian.dnd")
@@ -91,7 +98,7 @@ Item {
   }
 
   function rebuildDisplay() {
-    var out = Search.filterEntries(root.entries, root.filterText, 80)
+    var out = Search.filterEntries(root.entries, root.filterText, 80, root.pins, root.recents)
     displayModel.clear()
     for (var i = 0; i < out.length; i++) {
       displayModel.append({
@@ -99,7 +106,9 @@ Item {
         kind: String(out[i].kind || ""),
         kindLabel: Search.kindLabel(out[i].kind),
         summary: String(out[i].summary || ""),
-        body: String(out[i].body || "")
+        body: String(out[i].body || ""),
+        group: String(out[i].group || ""),
+        pinned: out[i].pinned ? 1 : 0
       })
     }
     if (displayModel.count === 0) selectedIndex = 0
@@ -140,6 +149,14 @@ Item {
     if (!specJson)
       return
     root.applyRoll(Search.executeRoll(specJson))
+    root.rememberCurrent()
+    if (!root.filterText) {
+      var row = root.currentRow()
+      if (row) {
+        root.rebuildDisplay()
+        root.selectNamed(row.kind, row.name)
+      }
+    }
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
@@ -151,6 +168,11 @@ Item {
     if (!rolls || !rolls.length)
       return
     root.applyRoll(Search.executeRoll(JSON.stringify(rolls[0])))
+    root.rememberCurrent()
+    if (!root.filterText) {
+      root.rebuildDisplay()
+      root.selectNamed(row.kind, row.name)
+    }
   }
 
   function rebuildDetail() {
@@ -188,11 +210,77 @@ Item {
   }
 
   function setFilter(nextFilter) {
-    root.filterText = Search.sanitizeFilter(nextFilter)
+    var next = Search.sanitizeFilter(nextFilter)
+    var row = (root.filterText && !next) ? root.currentRow() : null
+    if (row)
+      root.rememberCurrent()
+    root.filterText = next
     root.selectedIndex = 0
     root.cursorActive = true
     root.copiedHint = ""
     root.rebuildDisplay()
+    if (row && !next)
+      root.selectNamed(row.kind, row.name)
+  }
+
+  function selectNamed(kind, name) {
+    var want = String(name || "").toLowerCase()
+    for (var i = 0; i < displayModel.count; i++) {
+      var row = displayModel.get(i)
+      if (row && row.kind === kind && String(row.name || "").toLowerCase() === want) {
+        root.selectedIndex = i
+        root.cursorActive = true
+        resultList.positionViewAtIndex(i, ListView.Contain)
+        return
+      }
+    }
+  }
+
+  function loadRecents(raw) {
+    var state = Search.parseState(raw)
+    if (Search.sameRefs(state.pins, root.pins) && Search.sameRefs(state.recents, root.recents))
+      return
+    root.pins = state.pins
+    root.recents = state.recents
+    if (root.opened)
+      root.rebuildDisplay()
+  }
+
+  function saveRecents() {
+    if (!root.recentsPath)
+      return
+    recentsFile.setText(Search.serializeState(root.pins, root.recents))
+  }
+
+  function rememberCurrent() {
+    var row = root.currentRow()
+    if (!row)
+      return false
+    var next = Search.rememberRef(root.recents, row.kind, row.name)
+    if (Search.sameRefs(next, root.recents))
+      return false
+    root.recents = next
+    root.saveRecents()
+    return true
+  }
+
+  function togglePinCurrent() {
+    var row = root.currentRow()
+    if (!row)
+      return
+    var kind = row.kind
+    var name = row.name
+    if (!Search.isPinned(root.pins, kind, name) && (root.pins || []).length >= Search.MAX_PINS) {
+      root.copiedHint = "Pin limit"
+      copiedTimer.restart()
+      return
+    }
+    root.pins = Search.togglePin(root.pins, kind, name)
+    root.copiedHint = Search.isPinned(root.pins, kind, name) ? "Pinned" : "Unpinned"
+    copiedTimer.restart()
+    root.saveRecents()
+    root.rebuildDisplay()
+    root.selectNamed(kind, name)
   }
 
   function select(delta) {
@@ -234,6 +322,8 @@ Item {
     if (!row) return
     var text = Search.copyText(row)
     if (!text || text.indexOf("\0") !== -1) return
+    var kind = row.kind
+    var name = row.name
     root.pendingCopy = text
     if (copier.running)
       copier.running = false
@@ -241,6 +331,11 @@ Item {
     copier.running = true
     root.copiedHint = "Copied"
     copiedTimer.restart()
+    root.rememberCurrent()
+    if (!root.filterText) {
+      root.rebuildDisplay()
+      root.selectNamed(kind, name)
+    }
   }
 
   onSelectedIndexChanged: root.rebuildDetail()
@@ -261,6 +356,17 @@ Item {
     watchChanges: true
     printErrors: false
     onFileChanged: root.readIndexBounded()
+  }
+
+  FileView {
+    id: recentsFile
+    path: root.recentsPath
+    watchChanges: true
+    atomicWrites: true
+    printErrors: false
+    onLoaded: root.loadRecents(text())
+    onLoadFailed: root.loadRecents("")
+    onFileChanged: reload()
   }
 
   Process {
@@ -345,6 +451,9 @@ Item {
             event.accepted = true
           } else if (event.key === Qt.Key_R && (event.modifiers & Qt.ControlModifier)) {
             root.rollPrimary()
+            event.accepted = true
+          } else if (event.key === Qt.Key_P && (event.modifiers & Qt.ControlModifier)) {
+            root.togglePinCurrent()
             event.accepted = true
           } else if (event.key === Qt.Key_Up && (event.modifiers & Qt.ControlModifier)) {
             root.scrollDetail(-1)
@@ -464,6 +573,29 @@ Item {
               clip: true
               spacing: Style.space(4)
               boundsBehavior: Flickable.StopAtBounds
+              section.property: "group"
+              section.criteria: ViewSection.FullString
+              section.delegate: Item {
+                required property string section
+                width: ListView.view.width
+                height: section ? Style.font.caption + Style.space(12) : 0
+                visible: section !== ""
+
+                Text {
+                  anchors.left: parent.left
+                  anchors.right: parent.right
+                  anchors.bottom: parent.bottom
+                  anchors.bottomMargin: Style.space(2)
+                  text: section
+                  textFormat: Text.PlainText
+                  color: root.foreground
+                  opacity: 0.45
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                  elide: Text.ElideRight
+                }
+              }
 
               delegate: Rectangle {
                 id: row
@@ -473,6 +605,8 @@ Item {
                 required property string kindLabel
                 required property string summary
                 required property string body
+                required property string group
+                required property int pinned
 
                 readonly property bool hasCursor: root.cursorActive && index === root.selectedIndex
 

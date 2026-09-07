@@ -131,6 +131,89 @@ function testSanitizeFilterCapsAndStrips() {
   assert.ok(cleaned.startsWith("foo"));
 }
 
+function testRecentsStateRoundtripAndCaps() {
+  const dirty = {
+    version: 1,
+    pins: [
+      { kind: "monster", name: "Goblin" },
+      { kind: "nope", name: "X" },
+      { kind: "spell", name: '<img src="x">Fireball' },
+      { kind: "monster", name: "Goblin" }
+    ],
+    recents: [
+      { kind: "rule", name: "Cover" },
+      { kind: "rule", name: "Cover" },
+      "nope"
+    ]
+  };
+  const state = ctx.parseState(JSON.stringify(dirty));
+  assert.strictEqual(state.pins.length, 2);
+  assert.strictEqual(state.pins[0].name, "Goblin");
+  assert.strictEqual(state.pins[1].name, "Fireball");
+  assert.strictEqual(state.recents.length, 1);
+  assert.strictEqual(state.recents[0].name, "Cover");
+  const raw = ctx.serializeState(state.pins, state.recents);
+  const again = ctx.parseState(raw);
+  assert.ok(ctx.sameRefs(again.pins, state.pins));
+  assert.ok(ctx.sameRefs(again.recents, state.recents));
+  assert.strictEqual(ctx.parseState("x".repeat(ctx.MAX_STATE_BYTES + 1)).recents.length, 0);
+  assert.strictEqual(ctx.parseState("{not json").pins.length, 0);
+}
+
+function testRememberAndPin() {
+  let recents = [];
+  recents = ctx.rememberRef(recents, "rule", "Cover");
+  recents = ctx.rememberRef(recents, "spell", "Fireball");
+  recents = ctx.rememberRef(recents, "rule", "Cover");
+  assert.strictEqual(recents.length, 2);
+  assert.strictEqual(recents[0].name, "Cover");
+  assert.strictEqual(recents[1].name, "Fireball");
+  for (let i = 0; i < 12; i++)
+    recents = ctx.rememberRef(recents, "spell", "Spell " + i);
+  assert.strictEqual(recents.length, ctx.MAX_RECENTS);
+  assert.strictEqual(recents[0].name, "Spell 11");
+
+  let pins = [];
+  pins = ctx.togglePin(pins, "monster", "Goblin");
+  pins = ctx.togglePin(pins, "monster", "Goblin");
+  assert.strictEqual(pins.length, 0);
+  pins = ctx.togglePin(pins, "monster", "Goblin");
+  pins = ctx.togglePin(pins, "spell", "Fireball");
+  assert.strictEqual(pins.length, 2);
+  assert.ok(ctx.isPinned(pins, "monster", "goblin"));
+  assert.ok(!ctx.isPinned(pins, "rule", "Cover"));
+  for (let i = 0; i < ctx.MAX_PINS; i++)
+    pins = ctx.togglePin(pins, "feat", "Feat " + i);
+  assert.strictEqual(pins.length, ctx.MAX_PINS);
+  const stuck = ctx.togglePin(pins, "feat", "Overflow");
+  assert.ok(ctx.sameRefs(stuck, pins));
+}
+
+function testEmptyQueryPrefersPinsAndRecents() {
+  const entries = ctx.parseIndex(JSON.stringify(indexOf([
+    { kind: "condition", name: "Prone", summary: "s", body: "You are prone.", tags: "prone" },
+    { kind: "condition", name: "Blinded", summary: "s", body: "You can't see.", tags: "blinded" },
+    { kind: "monster", name: "Goblin", summary: "Small", body: "A goblin.", tags: "goblin" },
+    { kind: "rule", name: "Cover", summary: "s", body: "Cover.", tags: "cover" }
+  ])));
+  const plain = ctx.filterEntries(entries, "", 80);
+  assert.ok(plain.every(e => e.kind === "condition"));
+  assert.ok(plain.every(e => e.group === ""));
+
+  const pins = [{ kind: "monster", name: "Goblin" }];
+  const recents = [{ kind: "rule", name: "Cover" }, { kind: "condition", name: "Prone" }];
+  const mixed = ctx.filterEntries(entries, "", 80, pins, recents);
+  assert.strictEqual(mixed.map(e => e.name).join(","), "Goblin,Cover,Prone,Blinded");
+  assert.strictEqual(mixed[0].group, "Pinned");
+  assert.strictEqual(mixed[1].group, "Recent");
+  assert.strictEqual(mixed[2].group, "Recent");
+  assert.strictEqual(mixed[3].group, "Conditions");
+  assert.strictEqual(mixed[0].pinned, 1);
+
+  const missing = ctx.filterEntries(entries, "", 80, [{ kind: "spell", name: "Missing" }], recents);
+  assert.ok(!missing.some(e => e.name === "Missing"));
+}
+
 function testSanitizeFilterKeepsTrailingSpace() {
   assert.strictEqual(ctx.sanitizeFilter("spell "), "spell ");
   assert.strictEqual(ctx.sanitizeFilter("  monster goblin"), "monster goblin");
@@ -355,6 +438,9 @@ const tests = [
   testFuzzyKindPrefixAndTokens,
   testSnapshotParsesUnderCaps,
   testSanitizeFilterCapsAndStrips,
+  testRecentsStateRoundtripAndCaps,
+  testRememberAndPin,
+  testEmptyQueryPrefersPinsAndRecents,
   testSanitizeFilterKeepsTrailingSpace,
   testCopyTextIsPlainAndDropsEmpty,
   testBodyBlocksParseMultilineTable,

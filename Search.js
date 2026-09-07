@@ -32,6 +32,9 @@ var MAX_TAGS_CHARS = 240
 var MAX_HAYSTACK_CHARS = 1024
 var MAX_FILTER_CHARS = 120
 var MAX_RESULTS = 80
+var MAX_RECENTS = 8
+var MAX_PINS = 8
+var MAX_STATE_BYTES = 16 * 1024
 var MAX_BODY_BLOCKS = 80
 var MAX_TABLE_ROWS = 40
 var MAX_TABLE_COLS = 12
@@ -257,12 +260,197 @@ function scoreEntry(entry, kind, needle) {
   return -1
 }
 
-function filterEntries(entries, text, limit) {
+function decorate(entry, group, pinned) {
+  if (!entry)
+    return null
+  return {
+    kind: entry.kind,
+    name: entry.name,
+    summary: entry.summary,
+    body: entry.body,
+    group: group || "",
+    pinned: pinned ? 1 : 0
+  }
+}
+
+function entryRef(kind, name) {
+  var k = String(kind || "")
+  if (!KINDS[k])
+    return null
+  var n = sanitizeText(name, false, MAX_NAME_CHARS)
+  if (!n)
+    return null
+  return { kind: k, name: n }
+}
+
+function refKey(ref) {
+  if (!ref)
+    return ""
+  return String(ref.kind || "") + "\0" + String(ref.name || "").toLowerCase()
+}
+
+function sameRefs(a, b) {
+  if (!a || !b || a.length !== b.length)
+    return false
+  for (var i = 0; i < a.length; i++) {
+    if (!a[i] || !b[i] || a[i].kind !== b[i].kind || a[i].name !== b[i].name)
+      return false
+  }
+  return true
+}
+
+function parseRefList(value, cap) {
+  if (!Array.isArray(value))
+    return []
+  var limit = cap > 0 ? cap : MAX_RECENTS
+  var out = []
+  var seen = {}
+  for (var i = 0; i < value.length && out.length < limit; i++) {
+    var row = value[i]
+    if (!row || typeof row !== "object")
+      continue
+    var ref = entryRef(row.kind, row.name)
+    if (!ref)
+      continue
+    var key = refKey(ref)
+    if (seen[key])
+      continue
+    seen[key] = true
+    out.push(ref)
+  }
+  return out
+}
+
+function parseState(raw) {
+  var empty = { pins: [], recents: [] }
+  var text = String(raw || "")
+  if (!text || text.length > MAX_STATE_BYTES)
+    return empty
+  try {
+    var parsed = JSON.parse(text)
+  } catch (e) {
+    return empty
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+    return empty
+  return {
+    pins: parseRefList(parsed.pins, MAX_PINS),
+    recents: parseRefList(parsed.recents, MAX_RECENTS)
+  }
+}
+
+function serializeState(pins, recents) {
+  return JSON.stringify({
+    version: 1,
+    pins: parseRefList(pins, MAX_PINS),
+    recents: parseRefList(recents, MAX_RECENTS)
+  }) + "\n"
+}
+
+function findEntry(entries, kind, name) {
+  var ref = entryRef(kind, name)
+  if (!ref)
+    return null
+  var list = entries || []
+  var want = ref.name.toLowerCase()
+  for (var i = 0; i < list.length; i++) {
+    if (list[i] && list[i].kind === ref.kind && String(list[i].name || "").toLowerCase() === want)
+      return list[i]
+  }
+  return null
+}
+
+function isPinned(pins, kind, name) {
+  var ref = entryRef(kind, name)
+  if (!ref)
+    return false
+  var list = pins || []
+  var key = refKey(ref)
+  for (var i = 0; i < list.length; i++) {
+    if (refKey(list[i]) === key)
+      return true
+  }
+  return false
+}
+
+function rememberRef(recents, kind, name) {
+  var ref = entryRef(kind, name)
+  var list = recents || []
+  if (!ref)
+    return list
+  var out = [ref]
+  var key = refKey(ref)
+  for (var i = 0; i < list.length && out.length < MAX_RECENTS; i++) {
+    if (!list[i] || refKey(list[i]) === key)
+      continue
+    out.push({ kind: list[i].kind, name: list[i].name })
+  }
+  return out
+}
+
+function togglePin(pins, kind, name) {
+  var ref = entryRef(kind, name)
+  var list = pins || []
+  if (!ref)
+    return list
+  var key = refKey(ref)
+  var out = []
+  var found = false
+  for (var i = 0; i < list.length; i++) {
+    if (!list[i])
+      continue
+    if (refKey(list[i]) === key) {
+      found = true
+      continue
+    }
+    out.push({ kind: list[i].kind, name: list[i].name })
+  }
+  if (!found) {
+    if (out.length >= MAX_PINS)
+      return list
+    out.push(ref)
+  }
+  return out
+}
+
+function composeEmptyQuery(entries, pins, recents) {
+  var list = entries || []
+  var pinRefs = pins || []
+  var recentRefs = recents || []
+  var grouped = pinRefs.length > 0 || recentRefs.length > 0
+  var out = []
+  var seen = {}
+
+  function push(entry, group, pinned) {
+    if (!entry)
+      return
+    var key = String(entry.kind || "") + "\0" + String(entry.name || "").toLowerCase()
+    if (seen[key])
+      return
+    seen[key] = true
+    out.push(decorate(entry, grouped ? group : "", pinned))
+  }
+
+  var i
+  for (i = 0; i < pinRefs.length; i++)
+    push(findEntry(list, pinRefs[i].kind, pinRefs[i].name), "Pinned", true)
+  for (i = 0; i < recentRefs.length; i++)
+    push(findEntry(list, recentRefs[i].kind, recentRefs[i].name), "Recent", false)
+  for (i = 0; i < list.length; i++) {
+    if (list[i] && list[i].kind === "condition")
+      push(list[i], "Conditions", false)
+  }
+  return out
+}
+
+function filterEntries(entries, text, limit, pins, recents) {
   var parsed = parseQuery(text)
   var cap = limit > 0 ? limit : MAX_RESULTS
   var list = entries || []
   if (list.length > MAX_ENTRIES)
     list = list.slice(0, MAX_ENTRIES)
+  if (!parsed.kind && !parsed.text)
+    return composeEmptyQuery(list, pins, recents)
   var scored = []
   for (var i = 0; i < list.length; i++) {
     var entry = list[i]
@@ -284,7 +472,7 @@ function filterEntries(entries, text, limit) {
   })
   var out = []
   for (var j = 0; j < scored.length && out.length < cap; j++)
-    out.push(scored[j].entry)
+    out.push(decorate(scored[j].entry, "", isPinned(pins, scored[j].entry.kind, scored[j].entry.name)))
   return out
 }
 
