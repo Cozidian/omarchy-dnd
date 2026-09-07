@@ -206,6 +206,24 @@ Item {
     resultList.positionViewAtIndex(selectedIndex, ListView.Contain)
   }
 
+  function scrollDetail(direction) {
+    if (!detailFlick)
+      return
+    if (typeof detailFlick.cancelFlick === "function")
+      detailFlick.cancelFlick()
+    var origin = Number(detailFlick.originY) || 0
+    var maxY = origin + Math.max(0, detailFlick.contentHeight - detailFlick.height)
+    if (maxY <= origin && detailFlick.contentY <= origin)
+      return
+    var step = Math.max(Style.space(64), Math.round(detailFlick.height * 0.5))
+    var next = detailFlick.contentY + direction * step
+    if (next < origin)
+      next = origin
+    else if (next > maxY)
+      next = maxY
+    detailFlick.contentY = next
+  }
+
   function currentRow() {
     if (selectedIndex < 0 || selectedIndex >= displayModel.count) return null
     return displayModel.get(selectedIndex)
@@ -328,6 +346,12 @@ Item {
           } else if (event.key === Qt.Key_R && (event.modifiers & Qt.ControlModifier)) {
             root.rollPrimary()
             event.accepted = true
+          } else if (event.key === Qt.Key_Up && (event.modifiers & Qt.ControlModifier)) {
+            root.scrollDetail(-1)
+            event.accepted = true
+          } else if (event.key === Qt.Key_Down && (event.modifiers & Qt.ControlModifier)) {
+            root.scrollDetail(1)
+            event.accepted = true
           } else if (Util.editsFilter(event, root.filterText)) {
             root.setFilter(Util.editedFilter(event, root.filterText))
             event.accepted = true
@@ -414,7 +438,7 @@ Item {
             id: hintText
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
-            text: root.copiedHint !== "" ? root.copiedHint : "Enter copies  ·  Ctrl+R rolls  ·  Esc closes"
+            text: root.copiedHint !== "" ? root.copiedHint : "Enter copies  ·  Ctrl+R rolls  ·  Ctrl+↑/↓ scrolls"
             textFormat: Text.PlainText
             color: root.foreground
             opacity: 0.45

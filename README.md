@@ -46,9 +46,11 @@ Spaces split tokens, so `red drag` matches Adult Red Dragon and `fire ball` matc
 
 With an empty query, the list is just the conditions — the thing you look up mid-turn.
 
-- **Up / Down** move
+- **Up / Down** move the result list
+- **Ctrl+Up / Ctrl+Down** scroll the entry on the right
 - **Enter** or **Ctrl+C** copies the entry
-- **Esc** clears the query, then closes
+- **Ctrl+R** rolls the first dice expression
+- **Ctrl+U** or **Esc** clears the query; Esc again closes
 
 ## Data
 
