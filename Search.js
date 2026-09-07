@@ -60,6 +60,7 @@ var MAX_TABLE_ROWS = 40
 var MAX_TABLE_COLS = 12
 var MAX_CELL_CHARS = 480
 var MAX_LIST_ITEMS = 48
+var MAX_ROLLS = 16
 
 var SECTION_HEADINGS = {
   Traits: true,
@@ -1050,6 +1051,27 @@ function itemField(itemsJson, index, key) {
   return String(item[key] || "")
 }
 
+function itemInt(itemsJson, index, key, fallback) {
+  var items = parseJsonArray(itemsJson)
+  var item = items[index]
+  var def = fallback === undefined ? -1 : fallback
+  if (!item || typeof item !== "object" || item[key] === undefined || item[key] === null || item[key] === "")
+    return def
+  var n = Number(item[key])
+  if (n !== n)
+    return def
+  return n
+}
+
+function cycleIndex(index, count, delta) {
+  var n = count > 0 ? count : 0
+  if (n < 1)
+    return 0
+  var i = Number(index) || 0
+  var d = Number(delta) || 0
+  return ((i + d) % n + n) % n
+}
+
 function padRight(value, width) {
   var s = String(value || "")
   var cap = width > 0 ? width : 0
@@ -1436,9 +1458,11 @@ function collectRolls(body) {
       for (j = 0; j < dice.length; j++)
         out.push(dice[j])
     }
-    if (out.length >= 16)
+    if (out.length >= MAX_ROLLS)
       break
   }
+  if (out.length > MAX_ROLLS)
+    out = out.slice(0, MAX_ROLLS)
   return out
 }
 
@@ -1446,7 +1470,7 @@ function collectRollsJson(body) {
   return JSON.stringify(collectRolls(body))
 }
 
-function executeRoll(specRaw) {
+function executeRoll(specRaw, opts) {
   var spec = specRaw
   if (typeof specRaw === "string") {
     try {
@@ -1457,6 +1481,7 @@ function executeRoll(specRaw) {
   }
   if (!spec || !spec.type)
     return null
+  var advantage = !!(opts && opts.advantage)
   if (spec.type === "dice") {
     var rolled = rollExpr(spec.expr, 0)
     if (!rolled)
@@ -1487,11 +1512,17 @@ function executeRoll(specRaw) {
     var bits = []
     var d20 = 0
     if (spec.hasHit) {
-      d20 = 1 + Math.floor(Math.random() * 20)
+      var first = 1 + Math.floor(Math.random() * 20)
+      var second = advantage ? (1 + Math.floor(Math.random() * 20)) : first
+      d20 = advantage ? Math.max(first, second) : first
       var hitTotal = d20 + (spec.bonus || 0)
       var tag = d20 === 20 ? " crit" : (d20 === 1 ? " miss" : "")
       bits.push((d20 === 20 ? "nat 20" : (d20 === 1 ? "nat 1" : String(hitTotal))) + " to hit")
-      lines.push("1d20" + (spec.bonus >= 0 ? "+" + spec.bonus : spec.bonus) + " → " + d20 + (spec.bonus >= 0 ? "+" : "") + spec.bonus + tag)
+      var bonusText = (spec.bonus >= 0 ? "+" : "") + spec.bonus
+      var hitLine = "1d20" + bonusText + " → " + d20 + bonusText + tag
+      if (advantage)
+        hitLine = "adv " + first + "/" + second + " → " + d20 + bonusText + tag
+      lines.push(hitLine)
     }
     var extra = d20 === 20 ? true : false
     var dmg = spec.damage || []
@@ -1503,12 +1534,12 @@ function executeRoll(specRaw) {
       var r = rollExpr(parsed, more)
       if (!r)
         continue
-      var label = dmg[i].type || "damage"
-      bits.push(r.total + " " + label.toLowerCase())
-      lines.push(r.text + " → " + r.rolls.join("+") + (r.mod ? (r.mod > 0 ? "+" : "") + r.mod : "") + " " + label.toLowerCase())
+      var dmgLabel = dmg[i].type || "damage"
+      bits.push(r.total + " " + dmgLabel.toLowerCase())
+      lines.push(r.text + " → " + r.rolls.join("+") + (r.mod ? (r.mod > 0 ? "+" : "") + r.mod : "") + " " + dmgLabel.toLowerCase())
     }
     return {
-      title: String(spec.title || "Attack"),
+      title: String(spec.title || "Attack") + (advantage && spec.hasHit ? " (adv)" : ""),
       summary: bits.join("  ·  ") || "—",
       detail: lines.join("   "),
       tableRow: -1,

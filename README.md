@@ -53,7 +53,8 @@ With an empty query, the list is the conditions — the thing you look up mid-tu
 - **Up / Down** move the result list
 - **Ctrl+Up / Ctrl+Down** scroll the entry on the right
 - **Enter** or **Ctrl+C** copies the entry
-- **Ctrl+R** rolls the first dice expression
+- **[** / **]** or **Tab** picks which roll **Ctrl+R** fires
+- **Ctrl+R** rolls the selected dice expression; **Ctrl+Shift+R** rolls an attack with Advantage
 - **Ctrl+P** pins or unpins the current entry
 - **Ctrl+U** or **Esc** clears the query; Esc again closes
 

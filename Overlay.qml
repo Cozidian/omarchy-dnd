@@ -25,6 +25,8 @@ Item {
   property string rollDetail: ""
   property int rollTableRow: -1
   property string rollTableKey: ""
+  property int selectedRoll: 0
+  property int rollCount: 0
   property var pins: []
   property var recents: []
 
@@ -145,41 +147,56 @@ Item {
     root.rollTableKey = String(result.tableKey || "")
   }
 
-  function performRoll(specJson) {
+  function performRoll(specJson, rollIndex, advantage) {
     if (!specJson)
       return
-    root.applyRoll(Search.executeRoll(specJson))
+    if (rollIndex >= 0)
+      root.selectedRoll = rollIndex
+    root.applyRoll(Search.executeRoll(specJson, advantage ? { advantage: true } : null))
     root.rememberCurrent()
-    if (!root.filterText) {
-      var row = root.currentRow()
-      if (row) {
-        root.rebuildDisplay()
-        root.selectNamed(row.kind, row.name)
-      }
-    }
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
-  function rollPrimary() {
+  function rollPrimary(advantage) {
     var row = root.currentRow()
     if (!row)
       return
     var rolls = Search.collectRolls(row.body)
     if (!rolls || !rolls.length)
       return
-    root.applyRoll(Search.executeRoll(JSON.stringify(rolls[0])))
+    var index = root.selectedRoll
+    if (index < 0 || index >= rolls.length)
+      index = 0
+    root.selectedRoll = index
+    root.applyRoll(Search.executeRoll(JSON.stringify(rolls[index]), advantage ? { advantage: true } : null))
     root.rememberCurrent()
-    if (!root.filterText) {
-      root.rebuildDisplay()
-      root.selectNamed(row.kind, row.name)
-    }
+  }
+
+  function cycleRoll(delta) {
+    if (root.rollCount < 1)
+      return
+    root.selectedRoll = Search.cycleIndex(root.selectedRoll, root.rollCount, delta)
+  }
+
+  function rollChipColor(index) {
+    return root.wash(root.selectedBackground, index === root.selectedRoll && root.rollCount > 0 ? 0.58 : 0.28)
   }
 
   function rebuildDetail() {
     bodyModel.clear()
     root.clearRoll()
+    root.selectedRoll = 0
+    root.rollCount = 0
     var row = root.currentRow()
     var blocks = Search.bodyBlocks(row ? row.body : "")
+    var rollNo = 0
+    function takeRoll() {
+      if (rollNo >= Search.MAX_ROLLS)
+        return -1
+      var n = rollNo
+      rollNo++
+      return n
+    }
     for (var i = 0; i < blocks.length; i++) {
       var block = blocks[i]
       var kind = String(block.kind || "text")
@@ -187,9 +204,22 @@ Item {
       var isList = kind === "list"
       var isStats = kind === "stats"
       var isText = kind === "text"
+      var isQuote = kind === "quote"
       var rows = isTable ? (block.rows || []) : (isStats ? (block.rows || []) : [])
       var items = isList ? (block.items || []) : []
+      if (isList) {
+        for (var n = 0; n < items.length; n++) {
+          if (Search.actionRollSpec(items[n].label, items[n].body))
+            items[n].rollIndex = takeRoll()
+          else
+            items[n].rollIndex = -1
+        }
+      }
       var tableRoll = isTable ? Search.tableRollJson(JSON.stringify(block.headers || []), JSON.stringify(rows), block.caption || "") : ""
+      var tableRollIndex = tableRoll ? takeRoll() : -1
+      var dice = (isText || isQuote) ? Search.extractTextDice(block.text || "") : []
+      for (var d = 0; d < dice.length; d++)
+        dice[d].rollIndex = takeRoll()
       bodyModel.append({
         kind: kind,
         text: String(block.text || ""),
@@ -202,9 +232,11 @@ Item {
         weightsJson: isTable ? JSON.stringify(block.weights || []) : "[]",
         itemsJson: isList ? JSON.stringify(items) : (isStats ? JSON.stringify(rows) : "[]"),
         rollJson: tableRoll,
-        diceJson: isText ? Search.textDiceJson(block.text || "") : "[]"
+        tableRollIndex: tableRollIndex,
+        diceJson: dice.length ? JSON.stringify(dice) : "[]"
       })
     }
+    root.rollCount = rollNo
     if (detailFlick)
       detailFlick.contentY = 0
   }
@@ -450,7 +482,16 @@ Item {
             root.copyCurrent()
             event.accepted = true
           } else if (event.key === Qt.Key_R && (event.modifiers & Qt.ControlModifier)) {
-            root.rollPrimary()
+            root.rollPrimary(!!(event.modifiers & Qt.ShiftModifier))
+            event.accepted = true
+          } else if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) {
+            root.cycleRoll((event.key === Qt.Key_Backtab || (event.modifiers & Qt.ShiftModifier)) ? -1 : 1)
+            event.accepted = true
+          } else if (event.key === Qt.Key_BracketLeft) {
+            root.cycleRoll(-1)
+            event.accepted = true
+          } else if (event.key === Qt.Key_BracketRight) {
+            root.cycleRoll(1)
             event.accepted = true
           } else if (event.key === Qt.Key_P && (event.modifiers & Qt.ControlModifier)) {
             root.togglePinCurrent()
@@ -784,6 +825,7 @@ Item {
                     required property string weightsJson
                     required property string itemsJson
                     required property string rollJson
+                    required property int tableRollIndex
                     required property string diceJson
 
                     width: detailColumn.width
@@ -822,7 +864,7 @@ Item {
 
                     Flow {
                       width: parent.width
-                      visible: blockCol.kind === "text" && blockCol.diceJson !== "" && blockCol.diceJson !== "[]"
+                      visible: blockCol.diceJson !== "" && blockCol.diceJson !== "[]"
                       spacing: Style.space(8)
 
                       Repeater {
@@ -836,10 +878,11 @@ Item {
 
                         Rectangle {
                           required property var modelData
+                          readonly property int rollIndex: Number(modelData && modelData.rollIndex)
                           radius: height / 2
-                          color: root.wash(root.selectedBackground, 0.28)
+                          color: root.rollChipColor(rollIndex)
                           border.color: root.border
-                          border.width: 1
+                          border.width: rollIndex === root.selectedRoll ? 2 : 1
                           implicitHeight: diceChipText.implicitHeight + Style.space(8)
                           implicitWidth: diceChipText.implicitWidth + Style.space(18)
                           height: implicitHeight
@@ -859,7 +902,7 @@ Item {
                           MouseArea {
                             anchors.fill: parent
                             cursorShape: Qt.PointingHandCursor
-                            onClicked: root.performRoll(JSON.stringify(modelData))
+                            onClicked: root.performRoll(JSON.stringify(modelData), rollIndex)
                           }
                         }
                       }
@@ -982,6 +1025,7 @@ Item {
                           readonly property string itemLabel: Search.itemField(blockCol.itemsJson, index, "label")
                           readonly property string itemBody: Search.itemField(blockCol.itemsJson, index, "body")
                           readonly property string itemRoll: Search.actionRollJson(itemLabel, itemBody)
+                          readonly property int itemRollIndex: Search.itemInt(blockCol.itemsJson, index, "rollIndex", -1)
 
                           Item {
                             width: Style.space(16)
@@ -1042,9 +1086,9 @@ Item {
                           Rectangle {
                             visible: itemRoll !== ""
                             radius: height / 2
-                            color: root.wash(root.selectedBackground, 0.32)
+                            color: root.rollChipColor(itemRollIndex)
                             border.color: root.border
-                            border.width: 1
+                            border.width: itemRollIndex === root.selectedRoll ? 2 : 1
                             implicitHeight: Style.font.caption + Style.space(10)
                             implicitWidth: rollChipLabel.implicitWidth + Style.space(16)
                             height: implicitHeight
@@ -1065,7 +1109,7 @@ Item {
                             MouseArea {
                               anchors.fill: parent
                               cursorShape: Qt.PointingHandCursor
-                              onClicked: root.performRoll(itemRoll)
+                              onClicked: root.performRoll(itemRoll, itemRollIndex)
                             }
                           }
                         }
@@ -1093,9 +1137,9 @@ Item {
                       Rectangle {
                         visible: blockCol.rollJson !== ""
                         radius: height / 2
-                        color: root.wash(root.selectedBackground, 0.32)
+                        color: root.rollChipColor(blockCol.tableRollIndex)
                         border.color: root.border
-                        border.width: 1
+                        border.width: blockCol.tableRollIndex === root.selectedRoll ? 2 : 1
                         implicitHeight: Style.font.caption + Style.space(10)
                         implicitWidth: tableRollLabel.implicitWidth + Style.space(16)
                         height: implicitHeight
@@ -1115,7 +1159,7 @@ Item {
                         MouseArea {
                           anchors.fill: parent
                           cursorShape: Qt.PointingHandCursor
-                          onClicked: root.performRoll(blockCol.rollJson)
+                          onClicked: root.performRoll(blockCol.rollJson, blockCol.tableRollIndex)
                         }
                       }
                     }

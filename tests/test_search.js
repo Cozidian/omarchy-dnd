@@ -8,7 +8,15 @@ const assert = require("assert");
 
 const root = path.join(__dirname, "..");
 const src = fs.readFileSync(path.join(root, "Search.js"), "utf8").replace(/^\.pragma library\s*/, "");
-const ctx = {};
+const ctx = {
+  Math: {
+    random: Math.random.bind(Math),
+    floor: Math.floor,
+    max: Math.max,
+    min: Math.min,
+    sqrt: Math.sqrt
+  }
+};
 vm.createContext(ctx);
 vm.runInContext(src, ctx);
 
@@ -225,6 +233,40 @@ function testEmptyQueryPrefersPinsAndRecents() {
 
   const missing = ctx.filterEntries(entries, "", 80, [{ kind: "spell", name: "Missing" }], recents);
   assert.ok(!missing.some(e => e.name === "Missing"));
+}
+
+function testCycleIndexWraps() {
+  assert.strictEqual(ctx.cycleIndex(0, 3, 1), 1);
+  assert.strictEqual(ctx.cycleIndex(2, 3, 1), 0);
+  assert.strictEqual(ctx.cycleIndex(0, 3, -1), 2);
+  assert.strictEqual(ctx.cycleIndex(0, 0, 1), 0);
+}
+
+function testItemIntKeepsZero() {
+  const json = JSON.stringify([{ rollIndex: 0 }, { rollIndex: 2 }]);
+  assert.strictEqual(ctx.itemInt(json, 0, "rollIndex", -1), 0);
+  assert.strictEqual(ctx.itemInt(json, 1, "rollIndex", -1), 2);
+  assert.strictEqual(ctx.itemInt(json, 3, "rollIndex", -1), -1);
+}
+
+function testAdvantageKeepsHigherD20() {
+  const spec = { type: "action", title: "Scimitar", bonus: 4, hasHit: true, damage: [] };
+  const orig = ctx.Math.random;
+  try {
+    const once = [0.0];
+    ctx.Math.random = () => once.shift();
+    const normal = ctx.executeRoll(spec, null);
+    assert.ok(normal.detail.indexOf("adv") < 0);
+    assert.ok(normal.summary.indexOf("nat 1") >= 0);
+    const seq = [0.0, 0.95];
+    ctx.Math.random = () => seq.shift();
+    const adv = ctx.executeRoll(spec, { advantage: true });
+    assert.ok(adv.title.indexOf("(adv)") >= 0);
+    assert.ok(adv.detail.indexOf("adv 1/20") >= 0);
+    assert.ok(adv.summary.indexOf("nat 20") >= 0);
+  } finally {
+    ctx.Math.random = orig;
+  }
 }
 
 function testSanitizeFilterKeepsTrailingSpace() {
@@ -457,6 +499,9 @@ const tests = [
   testRecentsStateRoundtripAndCaps,
   testRememberAndPin,
   testEmptyQueryPrefersPinsAndRecents,
+  testCycleIndexWraps,
+  testItemIntKeepsZero,
+  testAdvantageKeepsHigherD20,
   testSanitizeFilterKeepsTrailingSpace,
   testCopyTextIsPlainAndDropsEmpty,
   testBodyBlocksParseMultilineTable,
