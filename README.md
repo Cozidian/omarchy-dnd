@@ -2,6 +2,8 @@
 
 Summon, type, read, dismiss. A 5e SRD search overlay for the Omarchy bar — the emoji picker, but for *prone*, *counterspell*, and *goblin*.
 
+![SRD Lookup on Fireball, with search results, spell stats, and an 8d6 roll](preview.png)
+
 Plugin id: `io.github.cozidian.dnd`
 
 D&D Beyond has no public API, so this does not talk to your character sheet. It searches a local snapshot of the **System Reference Document 5.2** (the 2024 / “5.5” rules, CC BY 4.0) via [Open5e](https://open5e.com/): conditions, spells, monsters, rules, feats, mundane items, weapons, armor, and magic items.
