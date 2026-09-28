@@ -30,10 +30,10 @@ def _max_bytes(raw: str) -> int:
 
 
 def read_state(path: str, limit: int) -> bytes | None:
-    flags = os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0)
-    flags |= getattr(os, "O_CLOEXEC", 0)
-    if not hasattr(os, "O_NOFOLLOW"):
+    if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_NONBLOCK"):
         return None
+    flags = os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW
+    flags |= getattr(os, "O_CLOEXEC", 0)
     try:
         fd = os.open(path, flags)
     except OSError:

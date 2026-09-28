@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
+import tempfile
 import time
 import urllib.parse
 import urllib.request
@@ -18,6 +20,7 @@ UA = "omarchy-dnd-srd-lookup/1.0 (https://github.com/Cozidian/omarchy-dnd)"
 KINDS = frozenset({"spell", "monster", "condition", "rule", "feat", "item", "weapon", "armor", "magic"})
 
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+MAX_SNAPSHOT_BYTES = 4 * 1024 * 1024
 MAX_PAGES = 40
 MAX_ENTRIES = 4000
 MAX_NAME_CHARS = 120
@@ -35,8 +38,34 @@ _INCOMPLETE_TAG_RE = re.compile(r"<[^>]*$")
 
 
 def allowed_url(url: str) -> bool:
-    parsed = urllib.parse.urlparse(url)
-    return parsed.scheme == "https" and parsed.hostname == ALLOWED_HOST
+    try:
+        parsed = urllib.parse.urlparse(url)
+        return (
+            parsed.scheme == "https"
+            and parsed.hostname == ALLOWED_HOST
+            and parsed.username is None
+            and parsed.password is None
+            and parsed.port in (None, 443)
+        )
+    except ValueError:
+        return False
+
+
+def write_snapshot(dest: Path, data: bytes) -> None:
+    if len(data) > MAX_SNAPSHOT_BYTES:
+        raise RuntimeError(f"snapshot exceeds {MAX_SNAPSHOT_BYTES} byte ceiling")
+    fd, temp_name = tempfile.mkstemp(prefix=".srd.json.", suffix=".tmp", dir=dest.parent)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temp_name, dest)
+    finally:
+        try:
+            os.unlink(temp_name)
+        except FileNotFoundError:
+            pass
 
 
 class HostLimitedRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -706,7 +735,8 @@ def main() -> int:
         "counts": counts,
         "entries": entries,
     }
-    dest.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    data = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    write_snapshot(dest, data)
     print(f"wrote {dest} ({dest.stat().st_size} bytes, {len(entries)} entries)", file=sys.stderr)
     print(json.dumps(payload["counts"]), file=sys.stderr)
     return 0
