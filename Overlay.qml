@@ -28,6 +28,9 @@ Item {
   property int selectedRoll: 0
   property int rollCount: 0
   property var pins: []
+  property string pendingPins: ""
+  property bool pinsLoaded: false
+  property bool pinsDirty: false
 
   property color background: Color.menu.background
   property color foreground: Color.menu.text
@@ -52,10 +55,12 @@ Item {
   }
   readonly property string dataPath: root.pluginDir ? root.pluginDir + "/data/srd.json" : ""
   readonly property string indexReaderScript: root.pluginDir ? root.pluginDir + "/scripts/read-index.py" : ""
+  readonly property string pinsStateScript: root.pluginDir ? root.pluginDir + "/scripts/pins-state.py" : ""
   readonly property string pinsPath: (Quickshell.env("HOME") || "") + "/.local/state/omarchy/dnd-recents.json"
 
   function open(payloadJson) {
     root.opened = true
+    root.readPinsBounded()
     root.filterText = ""
     root.selectedIndex = 0
     root.cursorActive = true
@@ -256,7 +261,10 @@ Item {
   }
 
   function loadPins(raw) {
+    if (root.pinsDirty)
+      return
     var state = Search.parseState(raw)
+    root.pinsLoaded = true
     if (Search.sameRefs(state.pins, root.pins))
       return
     root.pins = state.pins
@@ -264,10 +272,24 @@ Item {
       root.rebuildDisplay()
   }
 
-  function savePins() {
-    if (!root.pinsPath)
+  function readPinsBounded() {
+    if (!root.pinsPath || !root.pinsStateScript) {
+      root.loadPins("")
       return
-    pinsFile.setText(Search.serializeState(root.pins))
+    }
+    if (pinsReader.running)
+      pinsReader.running = false
+    pinsReader.running = true
+  }
+
+  function savePins() {
+    if (!root.pinsPath || !root.pinsStateScript)
+      return
+    root.pendingPins = Search.serializeState(root.pins)
+    if (pinsWriter.running)
+      pinsWriter.running = false
+    pinsWriter.stdinEnabled = true
+    pinsWriter.running = true
   }
 
   function togglePinCurrent() {
@@ -282,6 +304,7 @@ Item {
       return
     }
     root.pins = Search.togglePin(root.pins, kind, name)
+    root.pinsDirty = true
     root.copiedHint = Search.isPinned(root.pins, kind, name) ? "Pinned" : "Unpinned"
     copiedTimer.restart()
     root.savePins()
@@ -357,15 +380,43 @@ Item {
     onFileChanged: root.readIndexBounded()
   }
 
-  FileView {
-    id: pinsFile
-    path: root.pinsPath
-    watchChanges: true
-    atomicWrites: true
-    printErrors: false
-    onLoaded: root.loadPins(text())
-    onLoadFailed: root.loadPins("")
-    onFileChanged: reload()
+  Process {
+    id: pinsReader
+    running: false
+    command: (root.pinsPath && root.pinsStateScript)
+      ? ["/usr/bin/python3", "-I", "-B", "--", root.pinsStateScript, "read", root.pinsPath, String(Search.MAX_STATE_BYTES)]
+      : ["/usr/bin/true"]
+    stdout: StdioCollector {
+      id: pinsOut
+      waitForEnd: true
+    }
+    onExited: function(exitCode) {
+      var raw = String(pinsOut.text || "")
+      if (exitCode === 0 && raw.length <= Search.MAX_STATE_BYTES)
+        root.loadPins(raw)
+      else if (!root.pinsLoaded)
+        root.loadPins("")
+    }
+  }
+
+  Process {
+    id: pinsWriter
+    running: false
+    stdinEnabled: true
+    command: (root.pinsPath && root.pinsStateScript)
+      ? ["/usr/bin/python3", "-I", "-B", "--", root.pinsStateScript, "write", root.pinsPath, String(Search.MAX_STATE_BYTES)]
+      : ["/usr/bin/true"]
+    onStarted: {
+      pinsWriter.write(root.pendingPins)
+      pinsWriter.stdinEnabled = false
+      root.pendingPins = ""
+    }
+    onExited: function(exitCode) {
+      if (exitCode === 0) {
+        root.pinsDirty = false
+        root.pinsLoaded = true
+      }
+    }
   }
 
   Process {
@@ -400,7 +451,10 @@ Item {
     }
   }
 
-  Component.onCompleted: root.readIndexBounded()
+  Component.onCompleted: {
+    root.readIndexBounded()
+    root.readPinsBounded()
+  }
 
   PanelWindow {
     id: panel
